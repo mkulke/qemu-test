@@ -21,7 +21,7 @@ fn test_simple_guest_bin() -> Result<()> {
     let tmp_dir = tempfile::tempdir().context("failed to create temp dir")?;
     let guest_bin_path = tmp_dir.path().join("guest.bin");
     std::fs::write(&guest_bin_path, GUEST_BIN).context("failed to write guest binary")?;
-    let payload = QemuPayload::GuestBin(guest_bin_path.into());
+    let payload = QemuPayload::GuestBin(guest_bin_path);
     let cfg = QemuConfig::new(&tmp_dir, &payload);
     let mut process = QemuProcess::spawn(cfg).context("failed to spawn QEMU process")?;
 
@@ -70,7 +70,7 @@ fn test_live_migration() -> Result<()> {
 
     let guest_bin_path = src_dir.path().join("guest.bin");
     std::fs::write(&guest_bin_path, GUEST_BIN).context("failed to write guest binary")?;
-    let payload = QemuPayload::GuestBin(guest_bin_path.into());
+    let payload = QemuPayload::GuestBin(guest_bin_path);
 
     // Start source VM and verify it's running
     let cfg = QemuConfig::new(&src_dir, &payload);

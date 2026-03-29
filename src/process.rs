@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use qapi::qmp::{self, RunState};
 use qapi::{Qmp, Stream};
 use std::io::{BufRead, BufReader};
@@ -295,7 +295,6 @@ impl Drop for QemuProcess {
 
         if let Err(e) = self.child.kill() {
             eprintln!("failed to kill QEMU process: {e}");
-            return;
         };
     }
 }
