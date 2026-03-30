@@ -1,3 +1,4 @@
+use crate::config::CONFIG;
 use anyhow::{Context, Result, bail};
 use log::{debug, error};
 use qapi::qmp::{self, RunState};
@@ -6,16 +7,21 @@ use std::io::{BufRead, BufReader};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::process::{Child, Command};
+use std::thread;
 use std::time::{Duration, Instant};
-use std::{env, thread};
 use strum::Display;
+use strum::EnumString;
 use tempfile::TempDir;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
-const QEMU_BIN: &str = "qemu-system-x86_64";
+const DEFAULT_QEMU_BIN: &str = "qemu-system-x86_64";
+const DEFAULT_ACCELERATOR: Accelerator = Accelerator::Kvm;
 
+#[derive(Display, EnumString)]
+#[strum(serialize_all = "lowercase")]
 pub(crate) enum Accelerator {
     Kvm,
+    Mshv,
 }
 
 #[derive(Display)]
@@ -94,12 +100,7 @@ impl From<&GuestConfig> for Vec<String> {
             format!("unix:{},server=on,wait=off", cfg.serial_sock_path.display()),
         ]);
 
-        args.extend([
-            "-accel".into(),
-            match cfg.accel {
-                Accelerator::Kvm => "kvm".into(),
-            },
-        ]);
+        args.extend(["-accel".into(), cfg.accel.to_string()]);
 
         args.extend(["-M".into(), cfg.machine.to_string()]);
 
@@ -205,12 +206,19 @@ impl QemuProcess {
             QemuPayload::Kernel(_) => 256,
         };
 
+        let accel = match CONFIG.accel() {
+            Some(value) => value
+                .try_into()
+                .context(format!("invalid accelerator: {}", value))?,
+            None => DEFAULT_ACCELERATOR,
+        };
+
         let cfg = GuestConfig {
             ram_mb,
             serial_sock_path: serial_sock_path.clone(),
             qmp_sock_path: qmp_sock_path.clone(),
             payload: Some(payload.clone()),
-            accel: Accelerator::Kvm,
+            accel,
             machine,
             smp,
             incoming,
@@ -218,11 +226,9 @@ impl QemuProcess {
 
         let args: Vec<String> = (&cfg).into();
 
-        let program: PathBuf = env::var("QEMU_BIN")
-            .unwrap_or_else(|_| QEMU_BIN.into())
-            .into();
+        let program = CONFIG.qemu_bin().unwrap_or(DEFAULT_QEMU_BIN);
 
-        let child = Command::new(&program)
+        let child = Command::new(program)
             .args(args)
             .spawn()
             .context(format!("failed to start process: {:?}", program))?;
