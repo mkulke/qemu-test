@@ -17,7 +17,7 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 const DEFAULT_QEMU_BIN: &str = "qemu-system-x86_64";
 const DEFAULT_ACCELERATOR: Accelerator = Accelerator::Kvm;
 
-#[derive(Display, EnumString)]
+#[derive(Display, EnumString, Clone, Copy)]
 #[strum(serialize_all = "lowercase")]
 pub(crate) enum Accelerator {
     Kvm,
@@ -147,6 +147,7 @@ pub(crate) struct QemuProcess {
     child: Child,
     qmp: Qmp<Stream<BufReader<UnixStream>, UnixStream>>,
     serial_reader: BufReader<UnixStream>,
+    accel: Accelerator,
 }
 
 pub(crate) struct QemuConfig<'a> {
@@ -254,6 +255,7 @@ impl QemuProcess {
             child,
             qmp,
             serial_reader,
+            accel,
         };
         Ok(process)
     }
@@ -313,26 +315,19 @@ impl QemuProcess {
 
 impl Drop for QemuProcess {
     fn drop(&mut self) {
-        if let Err(e) = self.qmp().execute(&qmp::quit {}) {
-            error!("failed to quit VM: {e}");
-        };
-
-        match self.child.wait() {
-            Err(e) => error!("failed to wait for QEMU process: {e}"),
-            Ok(exit) => {
-                if !exit.success() {
-                    error!("QEMU process exited with error: {exit}");
-                } else {
-                    debug!("QEMU process exited with status: {exit}");
-                }
-                return;
+        if let Accelerator::Mshv = self.accel {
+            debug!(
+                "mshv does not support graceful shutdown, killing QEMU (PID {})",
+                self.child.id()
+            );
+            let _ = self.child.kill();
+        } else {
+            debug!("shutting down QEMU (PID {})", self.child.id());
+            if let Err(e) = self.qmp.execute(&qmp::quit {}) {
+                error!("QMP quit failed: {e}, killing process");
+                let _ = self.child.kill();
             }
         }
-
-        if let Err(e) = self.child.kill() {
-            error!("failed to kill QEMU process: {e}");
-        };
-
-        debug!("killed QEMU process with PID {}", self.child.id());
+        let _ = self.child.wait();
     }
 }
