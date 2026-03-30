@@ -84,10 +84,12 @@ pub fn test_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
             #vis fn #name() #ret {
                 let __test_label = #name_str.to_string();
                 println!("TEST: {}", __test_label);
+                let __start = std::time::Instant::now();
                 let result = (|| #block)();
+                let __elapsed = __start.elapsed();
                 match &result {
-                    Ok(()) => println!("PASS: {}", __test_label),
-                    Err(e) => eprintln!("FAIL: {}: {e}", __test_label),
+                    Ok(()) => println!("PASS: {} ({:.2}s)", __test_label, __elapsed.as_secs_f64()),
+                    Err(e) => eprintln!("FAIL: {}: {e} ({:.2}s)", __test_label, __elapsed.as_secs_f64()),
                 }
                 result
             }
@@ -114,10 +116,12 @@ pub fn test_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
                 #(#bindings)*
                 #label_code
                 println!("TEST: {}", __test_label);
+                let __start = std::time::Instant::now();
                 let result = (|| #block)();
+                let __elapsed = __start.elapsed();
                 match &result {
-                    Ok(()) => println!("PASS: {}", __test_label),
-                    Err(e) => eprintln!("FAIL: {}: {e}", __test_label),
+                    Ok(()) => println!("PASS: {} ({:.2}s)", __test_label, __elapsed.as_secs_f64()),
+                    Err(e) => eprintln!("FAIL: {}: {e} ({:.2}s)", __test_label, __elapsed.as_secs_f64()),
                 }
                 result
             }

@@ -25,16 +25,27 @@ fn main() -> Result<()> {
         .build()
         .expect("failed to build thread pool");
 
+    let start = std::time::Instant::now();
     let errors: Vec<_> =
         pool.install(|| TESTS.par_iter().filter_map(|test| test().err()).collect());
+    let elapsed = start.elapsed();
 
     if !errors.is_empty() {
         for e in &errors {
             eprintln!("{e:?}");
         }
-        bail!("FAIL: {} of {} tests failed", errors.len(), TESTS.len());
+        bail!(
+            "FAIL: {} of {} tests failed ({:.2}s)",
+            errors.len(),
+            TESTS.len(),
+            elapsed.as_secs_f64()
+        );
     }
 
-    println!("\nPASS: All {} tests passed", TESTS.len());
+    println!(
+        "\nPASS: All {} tests passed ({:.2}s)",
+        TESTS.len(),
+        elapsed.as_secs_f64()
+    );
     Ok(())
 }
