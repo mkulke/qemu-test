@@ -108,7 +108,7 @@ impl From<&GuestConfig> for Vec<String> {
             match payload {
                 QemuPayload::GuestBin(path) => {
                     args.push("-drive".into());
-                    args.push(format!("format=raw,file={},if=floppy", path.display()));
+                    args.push(format!("format=raw,file={},media=disk", path.display()));
                 }
                 QemuPayload::Kernel(path) => {
                     args.extend([
