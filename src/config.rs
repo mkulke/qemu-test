@@ -5,12 +5,14 @@ pub(crate) struct Config {
     qemu_bin: Option<String>,
     accel: Option<String>,
     test_jobs: Option<String>,
+    test_filter: Option<String>,
 }
 
 pub(crate) static CONFIG: LazyLock<Config> = LazyLock::new(|| Config {
     qemu_bin: env::var("QEMU_BIN").ok(),
     accel: env::var("ACCEL").ok(),
     test_jobs: env::var("TEST_JOBS").ok(),
+    test_filter: env::var("TEST_FILTER").ok(),
 });
 
 impl Config {
@@ -24,5 +26,9 @@ impl Config {
 
     pub fn test_jobs(&self) -> Option<&str> {
         self.test_jobs.as_deref()
+    }
+
+    pub fn test_filter(&self) -> Option<&str> {
+        self.test_filter.as_deref()
     }
 }

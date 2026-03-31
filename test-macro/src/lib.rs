@@ -29,18 +29,14 @@ impl Parse for ParamSpec {
     }
 }
 
-/// Wraps a test function to print `TEST: <name>` before running
-/// and `PASS: <name>` or `FAIL: <name>` after.
+/// Registers a test function with optional parameterization.
 ///
-/// Supports parameterized tests with cartesian product expansion:
+/// Supports cartesian product expansion:
 /// ```ignore
 /// #[test_fn(machine = {Machine::Pc, Machine::Q35}, smp = {1, 2, 4})]
 /// fn test_kernel_boot(machine: Machine, smp: u8) -> Result<()> { ... }
 /// ```
-/// Generates one function per combination and a `TEST_KERNEL_BOOT` const array.
-///
-/// Multiple `#[test_fn]` annotations can be stacked; each is independently
-/// expanded and all variants are collected into the same array.
+/// Generates one `TestEntry` per combination, auto-registered via `linkme`.
 #[proc_macro_attribute]
 pub fn test_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
@@ -79,23 +75,19 @@ pub fn test_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
     if all_combos.len() == 1 && all_combos[0].is_empty() {
         // Non-parameterized: single function, auto-registered
         let static_name = format_ident!("_{}", name_str.to_uppercase());
+        let label_fn = format_ident!("{}_label", name);
         let expanded = quote! {
             #(#other_attrs)*
             #vis fn #name() #ret {
-                let __test_label = #name_str.to_string();
-                println!("TEST: {}", __test_label);
-                let __start = std::time::Instant::now();
-                let result = (|| #block)();
-                let __elapsed = __start.elapsed();
-                match &result {
-                    Ok(()) => println!("PASS: {} ({:.2}s)", __test_label, __elapsed.as_secs_f64()),
-                    Err(e) => eprintln!("FAIL: {}: {e} ({:.2}s)", __test_label, __elapsed.as_secs_f64()),
-                }
-                result
+                (|| #block)()
+            }
+
+            fn #label_fn() -> String {
+                #name_str.to_string()
             }
 
             #[linkme::distributed_slice(crate::TESTS)]
-            static #static_name: fn() -> anyhow::Result<()> = #name;
+            static #static_name: crate::TestEntry = (#label_fn, #name);
         };
         return expanded.into();
     }
@@ -105,6 +97,7 @@ pub fn test_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     for (i, combo) in all_combos.iter().enumerate() {
         let fn_name = format_ident!("{}_{}", name, i);
+        let label_fn = format_ident!("{}_{}_label", name, i);
         let static_name = format_ident!("_{}_{}", name_str.to_uppercase(), i);
 
         let bindings = make_bindings(params, combo);
@@ -114,20 +107,17 @@ pub fn test_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
             #(#other_attrs)*
             #vis fn #fn_name() #ret {
                 #(#bindings)*
+                (|| #block)()
+            }
+
+            fn #label_fn() -> String {
+                #(#bindings)*
                 #label_code
-                println!("TEST: {}", __test_label);
-                let __start = std::time::Instant::now();
-                let result = (|| #block)();
-                let __elapsed = __start.elapsed();
-                match &result {
-                    Ok(()) => println!("PASS: {} ({:.2}s)", __test_label, __elapsed.as_secs_f64()),
-                    Err(e) => eprintln!("FAIL: {}: {e} ({:.2}s)", __test_label, __elapsed.as_secs_f64()),
-                }
-                result
+                __test_label
             }
 
             #[linkme::distributed_slice(crate::TESTS)]
-            static #static_name: fn() -> anyhow::Result<()> = #fn_name;
+            static #static_name: crate::TestEntry = (#label_fn, #fn_name);
         });
     }
 

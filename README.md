@@ -29,6 +29,15 @@ The test setup can be configured via environment variables:
 - `QEMU_BIN` - path to the QEMU binary to use (default: `qemu-system-x86_64`)
 - `TEST_JOBS` - number of parallel test jobs (default: 1)
 - `ACCEL` - accelerator to use (default: `kvm`)
+- `TEST_FILTER` - filter to select tests to run (default: all tests)
+
+## Filter
+
+This will run only tests with "migration", "simple" or "smp=1" in their label (parameters are expanded into labels):
+
+```bash
+make run TEST_JOBS=2 TEST_FILTER=migration,simple,smp=1
+```
 
 ## Extend
 
