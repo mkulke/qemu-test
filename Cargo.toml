@@ -10,6 +10,7 @@ indoc = "2.0.7"
 linkme = "0.3"
 log = "0.4.29"
 qapi = { git = "https://github.com/mkulke/qapi-rs.git", ref = "7710f36", features = ["qmp"] }
+rand = "0.10.0"
 rayon = "1"
 regex = "1.12.3"
 strip-ansi-escapes = "0.2.1"

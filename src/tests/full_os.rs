@@ -2,7 +2,7 @@ use crate::cloud_init::{CloudInitDisk, GUEST_USER};
 use crate::process::{
     CpuModel as Cpu, ExpectedOutput, Machine, QemuConfig, QemuPayload, QemuProcess,
 };
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use log::debug;
 use qapi::qmp;
 use std::path::Path;

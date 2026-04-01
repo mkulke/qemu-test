@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, bail};
 use config::CONFIG;
 use linkme::distributed_slice;
+use rand::seq::SliceRandom;
 use rayon::prelude::*;
 
 mod cloud_init;
@@ -40,7 +41,7 @@ fn main() -> Result<()> {
         .map(|f| f.split(',').collect())
         .unwrap_or_default();
 
-    let tests: Vec<&TestEntry> = TESTS
+    let mut tests: Vec<&TestEntry> = TESTS
         .iter()
         .filter(|entry| {
             if filters.is_empty() {
@@ -50,6 +51,8 @@ fn main() -> Result<()> {
             filters.iter().any(|f| label.contains(f))
         })
         .collect();
+
+    tests.shuffle(&mut rand::rng());
 
     if tests.is_empty() {
         bail!("no tests matched filter: {:?}", filters);

@@ -1,5 +1,5 @@
 use crate::config::CONFIG;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use log::{debug, error};
 use qapi::qmp::{self, RunState};
 use qapi::{Qmp, Stream};
