@@ -17,6 +17,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y nasm qemu-system-x86 wget mtools
 
+      - name: Verify dependencies
+        run: make check-tools
+
       - name: Install Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
