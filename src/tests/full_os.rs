@@ -68,6 +68,7 @@ fn ssh_command(key_path: &Path, port: u16, user: &str, command: &str) -> Result<
     machine = {Machine::Pc, Machine::Q35},
     smp = {1, 2, 4},
     ovmf = false,
+    io_thread = {true, false},
 )]
 // OVMF requires UEFI support, which is not available on Machine::Pc
 #[test_fn(
@@ -75,8 +76,15 @@ fn ssh_command(key_path: &Path, port: u16, user: &str, command: &str) -> Result<
     machine = Machine::Q35,
     smp = {1, 2, 4},
     ovmf = true,
+    io_thread = {true, false},
 )]
-pub(crate) fn test_os_boot(cpu: Cpu, machine: Machine, smp: u8, ovmf: bool) -> Result<()> {
+pub(crate) fn test_os_boot(
+    cpu: Cpu,
+    machine: Machine,
+    smp: u8,
+    ovmf: bool,
+    io_thread: bool,
+) -> Result<()> {
     let tmp_dir = tempfile::tempdir().context("failed to create temp dir")?;
 
     let ci = CloudInitDisk::create(tmp_dir.path()).context("failed to create cloud-init disk")?;
@@ -92,6 +100,9 @@ pub(crate) fn test_os_boot(cpu: Cpu, machine: Machine, smp: u8, ovmf: bool) -> R
         .with_ssh_port(ssh_port);
     if ovmf {
         cfg = cfg.with_ovmf(OVMF_CODE.into());
+    }
+    if io_thread {
+        cfg = cfg.with_io_thread();
     }
     let mut process = QemuProcess::spawn(cfg).context("failed to spawn QEMU process")?;
 

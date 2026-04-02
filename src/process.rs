@@ -6,7 +6,7 @@ use qapi::{Qmp, Stream};
 use regex::Regex;
 use std::io::{BufRead, BufReader};
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -95,6 +95,33 @@ struct GuestConfig {
     cloud_init: Option<PathBuf>,
     ssh_port: Option<u16>,
     ovmf: Option<PathBuf>,
+    io_thread: bool,
+}
+
+fn build_osdisk_arg(cfg: &GuestConfig, path: &Path) -> Vec<String> {
+    let io_thread_option = if cfg.io_thread { ",iothread=io0" } else { "" };
+    vec![
+        "-drive".into(),
+        format!(
+            "file={},format=qcow2,if=none,id=os,snapshot=on",
+            path.display()
+        ),
+        "-device".into(),
+        format!("virtio-blk-pci,drive=os{io_thread_option}"),
+    ]
+}
+
+fn build_kernel_args(kernel: &Path, initrd: Option<&PathBuf>) -> Vec<String> {
+    let mut args = vec![
+        "-kernel".into(),
+        format!("{}", kernel.display()),
+        "-append".into(),
+        "console=ttyS0 earlyprintk=serial panic=-1".into(),
+    ];
+    if let Some(initrd) = initrd {
+        args.extend(["-initrd".into(), format!("{}", initrd.display())]);
+    }
+    args
 }
 
 impl From<&GuestConfig> for Vec<String> {
@@ -119,6 +146,10 @@ impl From<&GuestConfig> for Vec<String> {
 
         args.extend(["-M".into(), cfg.machine.to_string()]);
 
+        if cfg.io_thread {
+            args.extend(["-object".into(), "iothread,id=io0".into()]);
+        }
+
         if let Some(payload) = &cfg.payload {
             match payload {
                 QemuPayload::GuestBin(path) => {
@@ -126,27 +157,9 @@ impl From<&GuestConfig> for Vec<String> {
                     args.push(format!("format=raw,file={},media=disk", path.display()));
                 }
                 QemuPayload::Kernel { kernel, initrd } => {
-                    args.extend([
-                        "-kernel".into(),
-                        format!("{}", kernel.display()),
-                        "-append".into(),
-                        "console=ttyS0 earlyprintk=serial panic=-1".into(),
-                    ]);
-                    if let Some(initrd) = initrd {
-                        args.extend(["-initrd".into(), format!("{}", initrd.display())]);
-                    }
+                    args.extend(build_kernel_args(kernel, initrd.as_ref()))
                 }
-                QemuPayload::DiskImage(path) => {
-                    args.extend([
-                        "-drive".into(),
-                        format!(
-                            "file={},format=qcow2,if=none,id=os,snapshot=on",
-                            path.display()
-                        ),
-                        "-device".into(),
-                        "virtio-blk-pci,drive=os".into(),
-                    ]);
-                }
+                QemuPayload::DiskImage(path) => args.extend(build_osdisk_arg(cfg, path)),
             }
         }
 
@@ -222,6 +235,7 @@ pub(crate) struct QemuConfig<'a> {
     cloud_init: Option<PathBuf>,
     ssh_port: Option<u16>,
     ovmf: Option<PathBuf>,
+    io_thread: bool,
 }
 
 impl<'a> QemuConfig<'a> {
@@ -236,6 +250,7 @@ impl<'a> QemuConfig<'a> {
             cloud_init: None,
             ssh_port: None,
             ovmf: None,
+            io_thread: false,
         }
     }
 
@@ -274,6 +289,11 @@ impl<'a> QemuConfig<'a> {
         self.ovmf = Some(path);
         self
     }
+
+    pub fn with_io_thread(mut self) -> Self {
+        self.io_thread = true;
+        self
+    }
 }
 
 impl QemuProcess {
@@ -288,6 +308,7 @@ impl QemuProcess {
             cloud_init,
             ssh_port,
             ovmf,
+            io_thread,
         } = cfg;
         let qmp_sock_path = temp_dir.path().join("qmp.sock");
         let serial_sock_path = temp_dir.path().join("serial.sock");
@@ -318,6 +339,7 @@ impl QemuProcess {
             cloud_init,
             ssh_port,
             ovmf,
+            io_thread,
         };
 
         let args: Vec<String> = (&cfg).into();
