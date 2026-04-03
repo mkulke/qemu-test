@@ -18,11 +18,17 @@ const SSH_TIMEOUT: Duration = Duration::from_secs(10);
 
 static NEXT_PORT: AtomicU16 = AtomicU16::new(10222);
 
-fn allocate_port() -> u16 {
+pub(crate) fn allocate_port() -> u16 {
     NEXT_PORT.fetch_add(1, Ordering::Relaxed)
 }
 
-fn ssh_command(key_path: &Path, port: u16, user: &str, command: &str) -> Result<String> {
+pub(crate) fn ssh_command(
+    key_path: &Path,
+    port: u16,
+    user: &str,
+    command: &str,
+    timeout: Duration,
+) -> Result<String> {
     let start = Instant::now();
     loop {
         let output = Command::new("ssh")
@@ -53,9 +59,9 @@ fn ssh_command(key_path: &Path, port: u16, user: &str, command: &str) -> Result<
             return Ok(stdout);
         }
 
-        if start.elapsed() > SSH_TIMEOUT {
+        if start.elapsed() > timeout {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!("SSH failed after {SSH_TIMEOUT:?}: {stderr}");
+            bail!("SSH failed after {timeout:?}: {stderr}");
         }
 
         debug!("SSH not ready, retrying...");
@@ -117,7 +123,13 @@ pub(crate) fn test_os_boot(
         .poll_line_timeout(expected_output, BOOT_TIMEOUT)
         .context("cloud-init did not finish")?;
 
-    let hostname = ssh_command(&ci.ssh_key_path, ssh_port, GUEST_USER, "hostname")?;
+    let hostname = ssh_command(
+        &ci.ssh_key_path,
+        ssh_port,
+        GUEST_USER,
+        "hostname",
+        SSH_TIMEOUT,
+    )?;
     debug!("guest hostname: {hostname}");
     assert_eq!(hostname, "cloud", "unexpected hostname: {hostname}");
 

@@ -426,12 +426,12 @@ impl QemuProcess {
         let start = std::time::Instant::now();
         loop {
             if start.elapsed() > TIMEOUT {
-                bail!("migration timed out");
+                bail!("timed out waiting for expected status");
             }
             let status = self
                 .qmp()
                 .execute(&qmp::query_status {})
-                .context("dest: query_status failed")?;
+                .context("query_status failed")?;
             if status.status == expected_state {
                 break;
             }
