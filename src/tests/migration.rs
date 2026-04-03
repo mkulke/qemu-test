@@ -2,9 +2,10 @@ use crate::cloud_init::{CloudInitDisk, GUEST_USER};
 use crate::process::CpuModel as Cpu;
 use crate::process::{ExpectedOutput, Machine, QemuConfig, QemuPayload, QemuProcess};
 use crate::tests::full_os::{allocate_port, ssh_command};
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use log::debug;
 use qapi::qmp::{self, RunState};
+use std::thread::sleep;
 use std::time::Duration;
 use test_macro::test_fn;
 
@@ -156,6 +157,27 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8) -> Result<()> {
     )?;
     debug!("source kernel: {kernel_before}");
 
+    // Start a periodic ticker to verify timer migration
+    ssh_command(
+        &ci.ssh_key_path,
+        src_ssh_port,
+        GUEST_USER,
+        r"sh -c 'while true; do echo tick >> /dev/shm/ticker; sleep 0.2; done' </dev/null >/dev/null 2>&1 &",
+        SSH_TIMEOUT,
+    )?;
+    sleep(Duration::from_secs(1));
+    let ticks_before: u32 = ssh_command(
+        &ci.ssh_key_path,
+        src_ssh_port,
+        GUEST_USER,
+        "wc -l < /dev/shm/ticker",
+        SSH_TIMEOUT,
+    )?
+    .parse()
+    .context("failed to parse tick count")?;
+    debug!("ticks before migration: {ticks_before}");
+    ensure!(ticks_before > 0, "ticker not running on source");
+
     // Spawn destination in incoming mode with its own cidata copy and SSH port
     let dst_cfg = base_cfg
         .with_incoming(&dst_dir)
@@ -171,7 +193,24 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8) -> Result<()> {
     drop(src);
     debug!("source VM terminated");
 
-    // Verify SSH on destination (guest network re-establishes through new user-net)
+    // Verify timer is still ticking on destination
+    sleep(Duration::from_secs(1));
+    let ticks_after: u32 = ssh_command(
+        &ci.ssh_key_path,
+        dst_ssh_port,
+        GUEST_USER,
+        "wc -l < /dev/shm/ticker",
+        SSH_TIMEOUT,
+    )?
+    .parse()
+    .context("failed to parse tick count")?;
+    debug!("ticks after migration: {ticks_after}");
+    ensure!(
+        ticks_after > ticks_before,
+        "timer not advancing after migration: {ticks_before} -> {ticks_after}"
+    );
+
+    // Verify SSH on destination
     let kernel_after = ssh_command(
         &ci.ssh_key_path,
         dst_ssh_port,
@@ -180,9 +219,9 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8) -> Result<()> {
         SSH_TIMEOUT,
     )?;
     debug!("destination kernel: {kernel_after}");
-    assert_eq!(
-        kernel_before, kernel_after,
-        "kernel version mismatch after migration"
+    ensure!(
+        kernel_before == kernel_after,
+        "kernel version mismatch after migration: {kernel_before} vs {kernel_after}"
     );
 
     Ok(())
