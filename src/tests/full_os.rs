@@ -7,20 +7,13 @@ use log::debug;
 use qapi::qmp;
 use std::path::Path;
 use std::process::Command;
-use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::{Duration, Instant};
 use test_macro::test_fn;
 
 const OS_IMAGE: &str = "payload/os-image.qcow2";
 const OVMF_CODE: &str = "payload/OVMF_CODE.fd";
-const BOOT_TIMEOUT: Duration = Duration::from_secs(30);
+const BOOT_TIMEOUT: Duration = Duration::from_secs(45);
 const SSH_TIMEOUT: Duration = Duration::from_secs(10);
-
-static NEXT_PORT: AtomicU16 = AtomicU16::new(10222);
-
-pub(crate) fn allocate_port() -> u16 {
-    NEXT_PORT.fetch_add(1, Ordering::Relaxed)
-}
 
 pub(crate) fn ssh_command(
     key_path: &Path,
@@ -31,8 +24,10 @@ pub(crate) fn ssh_command(
 ) -> Result<String> {
     let start = Instant::now();
     loop {
-        let output = Command::new("ssh")
+        let output = Command::new("timeout")
             .args([
+                "10",
+                "ssh",
                 "-i",
                 &key_path.to_string_lossy(),
                 "-o",
@@ -94,8 +89,6 @@ pub(crate) fn test_os_boot(
     let tmp_dir = tempfile::tempdir().context("failed to create temp dir")?;
 
     let ci = CloudInitDisk::create(tmp_dir.path()).context("failed to create cloud-init disk")?;
-    let ssh_port = allocate_port();
-    debug!("using SSH port {ssh_port}");
 
     let payload = QemuPayload::DiskImage(OS_IMAGE.into());
     let mut cfg = QemuConfig::new(&tmp_dir, &payload)
@@ -103,7 +96,7 @@ pub(crate) fn test_os_boot(
         .with_cpu_model(cpu)
         .with_smp(smp)
         .with_cloud_init(ci.path)
-        .with_ssh_port(ssh_port);
+        .with_ssh();
     if ovmf {
         cfg = cfg.with_ovmf(OVMF_CODE.into());
     }
@@ -111,6 +104,9 @@ pub(crate) fn test_os_boot(
         cfg = cfg.with_io_thread();
     }
     let mut process = QemuProcess::spawn(cfg).context("failed to spawn QEMU process")?;
+
+    let ssh_port = process.ssh_port()?;
+    debug!("using SSH port {ssh_port}");
 
     let status = process
         .qmp()

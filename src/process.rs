@@ -93,7 +93,7 @@ struct GuestConfig {
     incoming: bool,
     cpu_model: Option<CpuModel>,
     cloud_init: Option<PathBuf>,
-    ssh_port: Option<u16>,
+    ssh: bool,
     ovmf: Option<PathBuf>,
     io_thread: bool,
 }
@@ -189,10 +189,10 @@ impl From<&GuestConfig> for Vec<String> {
             ]);
         }
 
-        if let Some(port) = cfg.ssh_port {
+        if cfg.ssh {
             args.extend([
                 "-netdev".into(),
-                format!("type=user,id=user-net,hostfwd=tcp::{port}-:22"),
+                "type=user,id=user-net,hostfwd=tcp::0-:22".into(),
                 "-device".into(),
                 format!(
                     "virtio-net-pci,mac={},netdev=user-net",
@@ -233,7 +233,7 @@ pub(crate) struct QemuConfig<'a> {
     smp: Option<u8>,
     cpu_model: Option<CpuModel>,
     cloud_init: Option<PathBuf>,
-    ssh_port: Option<u16>,
+    ssh: bool,
     ovmf: Option<PathBuf>,
     io_thread: bool,
 }
@@ -248,7 +248,7 @@ impl<'a> QemuConfig<'a> {
             smp: None,
             cpu_model: None,
             cloud_init: None,
-            ssh_port: None,
+            ssh: false,
             ovmf: None,
             io_thread: false,
         }
@@ -280,8 +280,8 @@ impl<'a> QemuConfig<'a> {
         self
     }
 
-    pub fn with_ssh_port(mut self, port: u16) -> Self {
-        self.ssh_port = Some(port);
+    pub fn with_ssh(mut self) -> Self {
+        self.ssh = true;
         self
     }
 
@@ -306,7 +306,7 @@ impl QemuProcess {
             smp,
             cpu_model,
             cloud_init,
-            ssh_port,
+            ssh,
             ovmf,
             io_thread,
         } = cfg;
@@ -337,7 +337,7 @@ impl QemuProcess {
             incoming,
             cpu_model,
             cloud_init,
-            ssh_port,
+            ssh,
             ovmf,
             io_thread,
         };
@@ -379,6 +379,27 @@ impl QemuProcess {
 
     pub fn qmp(&mut self) -> &mut Qmp<Stream<BufReader<UnixStream>, UnixStream>> {
         &mut self.qmp
+    }
+
+    /// Query the OS-assigned SSH port from QEMU's user-net hostfwd.
+    pub fn ssh_port(&mut self) -> Result<u16> {
+        let output: String = self
+            .qmp
+            .execute(&qmp::human_monitor_command {
+                command_line: "info usernet".into(),
+                cpu_index: None,
+            })
+            .context("failed to query usernet info")?;
+        debug!("info usernet: {output}");
+        for line in output.lines() {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            if fields.len() >= 6 && fields[0].contains("HOST_FORWARD") && fields[5] == "22" {
+                return fields[3]
+                    .parse()
+                    .context("failed to parse SSH port from usernet info");
+            }
+        }
+        bail!("no SSH host forward found in usernet info")
     }
 
     pub fn poll_line(&mut self, expected: ExpectedOutput) -> Result<()> {

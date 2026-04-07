@@ -1,7 +1,7 @@
 use crate::cloud_init::{CloudInitDisk, GUEST_USER};
 use crate::process::CpuModel as Cpu;
 use crate::process::{ExpectedOutput, Machine, QemuConfig, QemuPayload, QemuProcess};
-use crate::tests::full_os::{allocate_port, ssh_command};
+use crate::tests::full_os::ssh_command;
 use anyhow::{Context, Result, ensure};
 use log::debug;
 use qapi::qmp::{self, RunState};
@@ -129,9 +129,6 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8) -> Result<()> {
     let dst_cidata_path = dst_dir.path().join("cidata.img");
     std::fs::copy(&ci.path, &dst_cidata_path).context("failed to copy cidata to dst")?;
 
-    let src_ssh_port = allocate_port();
-    let dst_ssh_port = allocate_port();
-
     let payload = QemuPayload::DiskImage(OS_IMAGE.into());
 
     let base_cfg = QemuConfig::new(&src_dir, &payload)
@@ -139,10 +136,13 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8) -> Result<()> {
         .with_cpu_model(Cpu::Host)
         .with_smp(smp)
         .with_cloud_init(ci.path.clone())
-        .with_ssh_port(src_ssh_port);
+        .with_ssh();
 
     // Boot source and wait for login prompt
     let mut src = QemuProcess::spawn(base_cfg.clone()).context("failed to spawn source VM")?;
+    let src_ssh_port = src.ssh_port()?;
+    debug!("source SSH port: {src_ssh_port}");
+
     let expected = ExpectedOutput::Pattern(r"Ubuntu 22\.04\..* LTS cloud ttyS0".try_into()?);
     src.poll_line_timeout(expected, OS_BOOT_TIMEOUT)
         .context("source VM did not boot")?;
@@ -179,12 +179,13 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8) -> Result<()> {
     debug!("ticks before migration: {ticks_before}");
     ensure!(ticks_before > 0, "ticker not running on source");
 
-    // Spawn destination in incoming mode with its own cidata copy and SSH port
+    // Spawn destination in incoming mode with its own cidata copy
     let dst_cfg = base_cfg
         .with_incoming(&dst_dir)
-        .with_cloud_init(dst_cidata_path)
-        .with_ssh_port(dst_ssh_port);
+        .with_cloud_init(dst_cidata_path);
     let mut dst = QemuProcess::spawn(dst_cfg).context("failed to spawn destination VM")?;
+    let dst_ssh_port = dst.ssh_port()?;
+    debug!("destination SSH port: {dst_ssh_port}");
 
     // Migrate
     do_migration(&mut src, &mut dst, &mig_sock)?;
