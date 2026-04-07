@@ -1,3 +1,5 @@
+use crate::process::Accelerator;
+use anyhow::{Context, Result};
 use std::env;
 use std::sync::LazyLock;
 
@@ -15,13 +17,21 @@ pub(crate) static CONFIG: LazyLock<Config> = LazyLock::new(|| Config {
     test_filter: env::var("TEST_FILTER").ok(),
 });
 
+const DEFAULT_ACCELERATOR: Accelerator = Accelerator::Kvm;
+
 impl Config {
     pub fn qemu_bin(&self) -> Option<&str> {
         self.qemu_bin.as_deref()
     }
 
-    pub fn accel(&self) -> Option<&str> {
-        self.accel.as_deref()
+    pub fn accel(&self) -> Result<Accelerator> {
+        let Some(value) = self.accel.as_deref() else {
+            return Ok(DEFAULT_ACCELERATOR);
+        };
+        let accel = value
+            .try_into()
+            .context(format!("invalid accelerator: {}", value))?;
+        Ok(accel)
     }
 
     pub fn test_jobs(&self) -> Option<&str> {

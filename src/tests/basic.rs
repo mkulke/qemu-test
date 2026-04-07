@@ -1,6 +1,8 @@
 use crate::config::CONFIG;
-use crate::process::{CpuModel, ExpectedOutput, Machine, QemuConfig, QemuPayload, QemuProcess};
-use anyhow::{Context, Result, bail};
+use crate::process::{
+    Accelerator, CpuModel, ExpectedOutput, Machine, QemuConfig, QemuPayload, QemuProcess,
+};
+use anyhow::{Context, Result};
 use log::debug;
 use qapi::qmp;
 use std::fs;
@@ -52,10 +54,9 @@ pub(crate) fn test_kernel_boot(machine: Machine, smp: u8, cpu: CpuModel) -> Resu
         .context("query_status failed")?;
     debug!("VM status: {:?}", status.status);
 
-    let hv = match CONFIG.accel().unwrap_or("kvm") {
-        "kvm" => "KVM",
-        "mshv" => "Microsoft Hyper-V",
-        _ => bail!("Unsupported accelerator"),
+    let hv = match CONFIG.accel()? {
+        Accelerator::Kvm => "KVM",
+        Accelerator::Mshv => "Microsoft Hyper-V",
     };
     let expected_output = ExpectedOutput::SubString(format!("Hypervisor detected: {hv}"));
     process

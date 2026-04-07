@@ -16,7 +16,6 @@ use tempfile::TempDir;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 const DEFAULT_QEMU_BIN: &str = "qemu-system-x86_64";
-const DEFAULT_ACCELERATOR: Accelerator = Accelerator::Kvm;
 
 pub(crate) enum ExpectedOutput {
     SubString(String),
@@ -319,12 +318,7 @@ impl QemuProcess {
             QemuPayload::DiskImage(_) => 1024,
         };
 
-        let accel = match CONFIG.accel() {
-            Some(value) => value
-                .try_into()
-                .context(format!("invalid accelerator: {}", value))?,
-            None => DEFAULT_ACCELERATOR,
-        };
+        let accel = CONFIG.accel()?;
 
         let cfg = GuestConfig {
             ram_mb,
