@@ -1,5 +1,7 @@
 GUEST_ASM = src/boot.asm
 GUEST_BIN = payload/guest.bin
+GUEST_PIO_STR_ASM = src/boot_pio_str.asm
+GUEST_PIO_STR_BIN = payload/guest_pio_str.bin
 VMLINUZ = payload/vmlinuz-virt
 INITRD = payload/initrd.img
 INIT_BIN = payload/init
@@ -21,7 +23,7 @@ NUM_TAPS ?= 2
 check-tools:
 	@$(foreach tool,$(REQUIRED_TOOLS),command -v $(tool) >/dev/null 2>&1 || { echo "error: $(tool) not found"; exit 1; };)
 
-build: check-tools $(GUEST_BIN) $(VMLINUZ) $(INITRD) $(OS_IMAGE) $(OVMF_CODE)
+build: check-tools $(GUEST_BIN) $(GUEST_PIO_STR_BIN) $(VMLINUZ) $(INITRD) $(OS_IMAGE) $(OVMF_CODE)
 	cargo build
 
 run: build
@@ -43,6 +45,9 @@ $(VMLINUZ):
 $(GUEST_BIN): $(GUEST_ASM)
 	nasm -f bin -o $@ $<
 
+$(GUEST_PIO_STR_BIN): $(GUEST_PIO_STR_ASM)
+	nasm -f bin -o $@ $<
+
 $(INIT_BIN): $(INIT_SRC)
 	gcc -static -o $@ $<
 
@@ -54,7 +59,7 @@ $(INITRD): $(INIT_BIN)
 	rm -rf $$d
 
 clean:
-	rm -f $(GUEST_BIN) $(INIT_BIN) $(INITRD)
+	rm -f $(GUEST_BIN) $(GUEST_PIO_STR_BIN) $(INIT_BIN) $(INITRD)
 	cargo clean
 
 lint:
