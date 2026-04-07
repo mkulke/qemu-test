@@ -44,7 +44,7 @@ impl Config {
         Ok(jobs)
     }
 
-    pub fn test_filter(&self) -> Option<&str> {
-        self.test_filter.as_deref()
+    pub fn test_filter(&self) -> Option<Vec<&str>> {
+        self.test_filter.as_deref().map(|f| f.split(',').collect())
     }
 }

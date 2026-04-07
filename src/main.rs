@@ -30,31 +30,27 @@ fn main() -> Result<()> {
     env_logger::init();
 
     let test_jobs = CONFIG.test_jobs()?;
-
-    let filters: Vec<&str> = CONFIG
-        .test_filter()
-        .map(|f| f.split(',').collect())
-        .unwrap_or_default();
+    let filter: Option<Vec<&str>> = CONFIG.test_filter();
 
     let mut tests: Vec<&TestEntry> = TESTS
         .iter()
         .filter(|entry| {
             let label = entry.0();
-            if filters.is_empty() {
+            let Some(filter) = &filter else {
                 if let Some(reason) = entry.2 {
                     println!("SKIP: {label} ({reason})");
                     return false;
                 }
                 return true;
-            }
-            filters.iter().any(|f| label.contains(f))
+            };
+            filter.iter().any(|f| label.contains(f))
         })
         .collect();
 
     tests.shuffle(&mut rand::rng());
 
     if tests.is_empty() {
-        bail!("no tests matched filter: {:?}", filters);
+        bail!("no tests matched filter: {:?}", filter);
     }
 
     let pool = rayon::ThreadPoolBuilder::new()
