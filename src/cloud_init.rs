@@ -27,7 +27,7 @@ fn create_cidata_disk(path: &Path, public_key: &str, mac: &str) -> Result<()> {
         ethernets:
           eth0:
             match:
-              macaddress: {mac}
+              macaddress: \"{mac}\"
             dhcp4: true
     "};
 
