@@ -15,6 +15,7 @@ const OS_IMAGE: &str = "payload/os-image.qcow2";
 const OVMF_CODE: &str = "payload/OVMF_CODE.fd";
 const BOOT_TIMEOUT: Duration = Duration::from_secs(45);
 const SSH_TIMEOUT: Duration = Duration::from_secs(10);
+const OS_READY_PATTERN: &str = r"Ubuntu (22|24).04.\d+ LTS cloud ttyS0";
 
 pub(crate) fn ssh_command(
     key_path: &Path,
@@ -117,7 +118,7 @@ pub(crate) fn test_os_boot(
         .context("query_status failed")?;
     debug!("VM status: {:?}", status.status);
 
-    let expected_output = ExpectedOutput::Pattern(r"Ubuntu 22\.04\..* LTS cloud ttyS0".try_into()?);
+    let expected_output = ExpectedOutput::Pattern(OS_READY_PATTERN.try_into()?);
     process
         .poll_line_timeout(expected_output, BOOT_TIMEOUT)
         .context("cloud-init did not finish")?;

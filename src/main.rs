@@ -3,6 +3,7 @@ use config::CONFIG;
 use linkme::distributed_slice;
 use rand::seq::SliceRandom;
 use rayon::prelude::*;
+use std::cell::RefCell;
 
 mod cloud_init;
 mod config;
@@ -16,8 +17,13 @@ pub type TestEntry = (fn() -> String, fn() -> Result<()>, Option<&'static str>);
 #[distributed_slice]
 pub static TESTS: [TestEntry];
 
+thread_local! {
+    pub static CURRENT_TEST_LABEL: RefCell<String> = const { RefCell::new(String::new()) };
+}
+
 fn run_test(entry: &TestEntry) -> Result<()> {
     let label = entry.0();
+    CURRENT_TEST_LABEL.with(|l| *l.borrow_mut() = label.clone());
     println!("TEST: {label}");
     let start = std::time::Instant::now();
     let result = (entry.1)();

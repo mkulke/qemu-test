@@ -8,6 +8,7 @@ pub(crate) struct Config {
     accel: Option<String>,
     test_jobs: Option<String>,
     test_filter: Option<String>,
+    keep_logs: Option<String>,
 }
 
 pub(crate) static CONFIG: LazyLock<Config> = LazyLock::new(|| Config {
@@ -15,6 +16,7 @@ pub(crate) static CONFIG: LazyLock<Config> = LazyLock::new(|| Config {
     accel: env::var("ACCEL").ok(),
     test_jobs: env::var("TEST_JOBS").ok(),
     test_filter: env::var("TEST_FILTER").ok(),
+    keep_logs: env::var("KEEP_LOGS").ok(),
 });
 
 const DEFAULT_ACCELERATOR: Accelerator = Accelerator::Kvm;
@@ -46,5 +48,9 @@ impl Config {
 
     pub fn test_filter(&self) -> Option<Vec<&str>> {
         self.test_filter.as_deref().map(|f| f.split(',').collect())
+    }
+
+    pub fn keep_logs(&self) -> Option<&str> {
+        self.keep_logs.as_deref()
     }
 }

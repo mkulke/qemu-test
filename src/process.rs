@@ -5,22 +5,33 @@ use log::debug;
 use qapi::qmp::{self, RunState};
 use qapi::{Qmp, Stream};
 use regex::Regex;
-use std::io::{BufRead, BufReader};
+use std::fs::File;
+use std::io::{BufRead, BufReader, ErrorKind};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::thread;
+use std::thread::sleep;
 use std::time::{Duration, Instant};
 use strum::Display;
 use strum::EnumString;
 use tempfile::TempDir;
 
-const TIMEOUT: Duration = Duration::from_secs(10);
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 const DEFAULT_QEMU_BIN: &str = "qemu-system-x86_64";
 
 pub(crate) enum ExpectedOutput {
     SubString(String),
     Pattern(Regex),
+}
+
+impl ExpectedOutput {
+    pub fn matches(&self, line: &str) -> bool {
+        match self {
+            ExpectedOutput::SubString(s) => line.contains(s),
+            ExpectedOutput::Pattern(r) => r.is_match(line),
+        }
+    }
 }
 
 #[derive(Display, EnumString, Clone, Copy)]
@@ -85,7 +96,7 @@ impl Socket<Unconnected> {
 struct GuestConfig {
     ram_mb: u16,
     qmp_sock_path: PathBuf,
-    serial_sock_path: PathBuf,
+    serial_log_path: PathBuf,
     accel: Accelerator,
     machine: Machine,
     payload: Option<QemuPayload>,
@@ -139,7 +150,7 @@ impl From<&GuestConfig> for Vec<String> {
 
         args.extend([
             "-serial".into(),
-            format!("unix:{},server=on,wait=off", cfg.serial_sock_path.display()),
+            format!("file:{}", cfg.serial_log_path.display()),
         ]);
 
         args.extend(["-accel".into(), cfg.accel.to_string()]);
@@ -218,7 +229,8 @@ pub(crate) enum QemuPayload {
 pub(crate) struct QemuProcess {
     child: Child,
     qmp: Qmp<Stream<BufReader<UnixStream>, UnixStream>>,
-    serial_reader: BufReader<UnixStream>,
+    serial_reader: BufReader<File>,
+    serial_log_path: PathBuf,
     accel: Accelerator,
 }
 
@@ -294,6 +306,12 @@ impl<'a> QemuConfig<'a> {
     }
 }
 
+enum ChunkResult {
+    Line(String),
+    Progress,
+    NoProgress,
+}
+
 impl QemuProcess {
     pub fn spawn(cfg: QemuConfig) -> Result<Self> {
         let QemuConfig {
@@ -309,7 +327,7 @@ impl QemuProcess {
             io_thread,
         } = cfg;
         let qmp_sock_path = temp_dir.path().join("qmp.sock");
-        let serial_sock_path = temp_dir.path().join("serial.sock");
+        let serial_log_path = temp_dir.path().join("serial.log");
 
         let ram_mb = match payload {
             QemuPayload::GuestBin(_) => 32,
@@ -321,7 +339,6 @@ impl QemuProcess {
 
         let cfg = GuestConfig {
             ram_mb,
-            serial_sock_path: serial_sock_path.clone(),
             qmp_sock_path: qmp_sock_path.clone(),
             payload: Some(payload.clone()),
             accel,
@@ -333,6 +350,7 @@ impl QemuProcess {
             ssh,
             ovmf,
             io_thread,
+            serial_log_path,
         };
 
         let args: Vec<String> = (&cfg).into();
@@ -347,27 +365,47 @@ impl QemuProcess {
         debug!("spawned QEMU with PID {}", child.id());
 
         let qmp_sock = Socket::new(qmp_sock_path);
-        let stream = qmp_sock.connect(TIMEOUT)?.state.stream;
+        let stream = qmp_sock.connect(DEFAULT_TIMEOUT)?.state.stream;
         let mut qmp = Qmp::new(qapi::Stream::new(
             BufReader::new(stream.try_clone().context("failed to clone stream")?),
             stream,
         ));
         qmp.handshake().context("QMP handshake failed")?;
 
-        let serial_sock = Socket::new(serial_sock_path);
-        let stream = serial_sock.connect(TIMEOUT)?.state.stream;
-        stream
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .context("failed to set serial read timeout")?;
-        let serial_reader = BufReader::new(stream);
-
+        let serial_log =
+            File::open(&cfg.serial_log_path).context("failed to open serial log file")?;
+        let serial_reader = BufReader::new(serial_log);
         let process = Self {
             child,
             qmp,
             serial_reader,
+            serial_log_path: cfg.serial_log_path.clone(),
             accel,
         };
         Ok(process)
+    }
+
+    /// Copy the serial log to `KEEP_LOGS/<label>-<pid>.log` for post-mortem analysis.
+    pub fn save_serial_log(&self) {
+        let Some(dir) = CONFIG.keep_logs() else {
+            return;
+        };
+        let label = crate::CURRENT_TEST_LABEL.with(|l| l.borrow().clone());
+        if label.is_empty() {
+            return;
+        }
+        let dest = PathBuf::from(dir);
+        if let Err(e) = std::fs::create_dir_all(&dest) {
+            debug!("failed to create KEEP_LOGS dir: {e}");
+            return;
+        }
+        let sanitized = label.replace(['(', ')', ',', ' ', '='], "_");
+        let pid = self.child.id();
+        let dest_file = dest.join(format!("{sanitized}-{pid}.log"));
+        match std::fs::copy(&self.serial_log_path, &dest_file) {
+            Ok(_) => debug!("saved serial log to {}", dest_file.display()),
+            Err(e) => debug!("failed to save serial log: {e}"),
+        }
     }
 
     pub fn qmp(&mut self) -> &mut Qmp<Stream<BufReader<UnixStream>, UnixStream>> {
@@ -396,42 +434,59 @@ impl QemuProcess {
     }
 
     pub fn poll_line(&mut self, expected: ExpectedOutput) -> Result<()> {
-        self.poll_line_timeout(expected, TIMEOUT)
+        self.poll_line_timeout(expected, DEFAULT_TIMEOUT)
+    }
+
+    fn read_chunk(&mut self, partial: &mut Vec<u8>) -> Result<ChunkResult> {
+        let mut buf = Vec::new();
+
+        match self.serial_reader.read_until(b'\n', &mut buf) {
+            Ok(0) => Ok(ChunkResult::NoProgress),
+            Ok(_) => {
+                partial.extend_from_slice(&buf);
+
+                if !partial.ends_with(b"\n") {
+                    return Ok(ChunkResult::Progress);
+                }
+
+                let line = String::from_utf8_lossy(partial).into_owned();
+                partial.clear();
+
+                Ok(ChunkResult::Line(line))
+            }
+
+            Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => {
+                Ok(ChunkResult::NoProgress)
+            }
+
+            Err(e) => bail!("serial file read error: {e}"),
+        }
     }
 
     pub fn poll_line_timeout(&mut self, expected: ExpectedOutput, timeout: Duration) -> Result<()> {
         let start = Instant::now();
+        let mut partial = Vec::new();
 
         loop {
             if start.elapsed() > timeout {
                 bail!("timeout waiting for expected output");
             }
 
-            let mut line = String::new();
-            match self.serial_reader.read_line(&mut line) {
-                Ok(0) => bail!("connection closed while waiting for expected output"),
-                Ok(_) => {
+            match self.read_chunk(&mut partial)? {
+                ChunkResult::Line(line) => {
                     debug!("[serial] {}", line.trim_end());
-                    match expected {
-                        ExpectedOutput::SubString(ref s) => {
-                            if line.contains(s) {
-                                return Ok(());
-                            }
-                        }
-                        ExpectedOutput::Pattern(ref r) => {
-                            if r.is_match(&line) {
-                                return Ok(());
-                            }
-                        }
+                    if expected.matches(&line) {
+                        return Ok(());
                     }
                 }
-                Err(e)
-                    if e.kind() == std::io::ErrorKind::WouldBlock
-                        || e.kind() == std::io::ErrorKind::TimedOut =>
-                {
+                ChunkResult::Progress => {
+                    // keep reading until we get a full line
                     continue;
                 }
-                Err(e) => bail!("serial read error: {e}"),
+                ChunkResult::NoProgress => {
+                    // nothing read, wait for more data
+                    sleep(Duration::from_millis(100));
+                }
             }
         }
     }
@@ -439,7 +494,7 @@ impl QemuProcess {
     pub fn poll_status(&mut self, expected_state: RunState) -> Result<()> {
         let start = std::time::Instant::now();
         loop {
-            if start.elapsed() > TIMEOUT {
+            if start.elapsed() > DEFAULT_TIMEOUT {
                 bail!("timed out waiting for expected status");
             }
             let status = self
@@ -457,6 +512,7 @@ impl QemuProcess {
 
 impl Drop for QemuProcess {
     fn drop(&mut self) {
+        self.save_serial_log();
         if let Accelerator::Mshv = self.accel {
             debug!(
                 "mshv does not support graceful shutdown, killing QEMU (PID {})",

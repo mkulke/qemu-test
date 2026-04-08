@@ -16,11 +16,15 @@ Run tests in parallel with 2 jobs (default is sequential):
 make run TEST_JOBS=2
 ```
 
+## Debug
+
 Run test with debug output:
 
 ```bash
 make run RUST_LOG=qemu_test::tests::migration=debug
 ```
+
+Set `KEEP_LOGS=./path/to/logs` to keep logs of all tests in the specified directory for debugging failed runs.
 
 ## Configure
 
@@ -30,6 +34,7 @@ The test setup can be configured via environment variables:
 - `TEST_JOBS` - number of parallel test jobs (default: 1)
 - `ACCEL` - accelerator to use (default: `kvm`)
 - `TEST_FILTER` - filter to select tests to run (default: all tests)
+- `KEEP_LOGS` - directory to keep logs of all tests (default: none)
 
 ## Filter
 
