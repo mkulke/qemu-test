@@ -1,3 +1,4 @@
+use crate::util::NetConfig;
 use anyhow::{Context, Result};
 use indoc::formatdoc;
 use log::debug;
@@ -12,7 +13,37 @@ pub(crate) struct CloudInitDisk {
     pub ssh_key_path: PathBuf,
 }
 
-fn create_cidata_disk(path: &Path, public_key: &str, mac: &str) -> Result<()> {
+fn build_network_config(net: &NetConfig) -> String {
+    match net {
+        NetConfig::UserNet { mac } => formatdoc! {"
+            version: 2
+            ethernets:
+              eth0:
+                match:
+                  macaddress: \"{mac}\"
+                dhcp4: true
+        "},
+        NetConfig::Tap {
+            guest_ip,
+            gateway,
+            mac,
+            ..
+        } => formatdoc! {"
+            version: 2
+            ethernets:
+              eth0:
+                match:
+                  macaddress: \"{mac}\"
+                addresses:
+                - \"{guest_ip}\"
+                routes:
+                - to: \"default\"
+                  via: \"{gateway}\"
+        "},
+    }
+}
+
+fn create_cidata_disk(path: &Path, public_key: &str, net: &NetConfig) -> Result<()> {
     let dir = path.parent().context("no parent dir")?;
     let cidata_dir = dir.join("cidata");
     fs::create_dir_all(&cidata_dir)?;
@@ -22,14 +53,7 @@ fn create_cidata_disk(path: &Path, public_key: &str, mac: &str) -> Result<()> {
         local-hostname: {GUEST_USER}
     "};
 
-    let network_config = formatdoc! {"
-        version: 2
-        ethernets:
-          eth0:
-            match:
-              macaddress: \"{mac}\"
-            dhcp4: true
-    "};
+    let network_config = build_network_config(net);
 
     let user_data = formatdoc! {"
         #cloud-config
@@ -63,7 +87,7 @@ fn create_cidata_disk(path: &Path, public_key: &str, mac: &str) -> Result<()> {
 }
 
 impl CloudInitDisk {
-    pub fn create(dir: &Path, mac: &str) -> Result<Self> {
+    pub fn create(dir: &Path, net: &NetConfig) -> Result<Self> {
         let ssh_key_path = dir.join("id_cloud");
         let status = Command::new("ssh-keygen")
             .args([
@@ -85,10 +109,11 @@ impl CloudInitDisk {
         debug!("generated SSH key: {}", ssh_key_path.display());
 
         let disk_path = dir.join("cidata.img");
-        create_cidata_disk(&disk_path, public_key, mac)?;
+        create_cidata_disk(&disk_path, public_key, net)?;
         debug!(
-            "wrote cloud-init disk to {} (mac={mac})",
-            disk_path.display()
+            "wrote cloud-init disk to {} (mac={})",
+            disk_path.display(),
+            net.mac()
         );
 
         Ok(Self {

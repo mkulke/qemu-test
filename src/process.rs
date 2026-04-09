@@ -1,5 +1,5 @@
 use crate::config::CONFIG;
-use crate::util::SshConfig;
+use crate::util::NetConfig;
 use anyhow::{Context, Result, bail};
 use log::debug;
 use qapi::qmp::{self, RunState};
@@ -104,7 +104,7 @@ struct GuestConfig {
     incoming: bool,
     cpu_model: Option<CpuModel>,
     cloud_init: Option<PathBuf>,
-    ssh: Option<SshConfig>,
+    net: Option<NetConfig>,
     ovmf: Option<PathBuf>,
     io_thread: bool,
 }
@@ -200,13 +200,25 @@ impl From<&GuestConfig> for Vec<String> {
             ]);
         }
 
-        if let Some(ssh_config) = &cfg.ssh {
-            let mac = ssh_config.mac();
+        if let Some(net_config) = &cfg.net {
+            let mac = net_config.mac();
+            match net_config {
+                NetConfig::UserNet { .. } => {
+                    args.extend([
+                        "-netdev".into(),
+                        "type=user,id=net0,hostfwd=tcp::0-:22".into(),
+                    ]);
+                }
+                NetConfig::Tap { ifname, .. } => {
+                    args.extend([
+                        "-netdev".into(),
+                        format!("tap,id=net0,ifname={ifname},script=no,downscript=no"),
+                    ]);
+                }
+            }
             args.extend([
-                "-netdev".into(),
-                "type=user,id=user-net,hostfwd=tcp::0-:22".into(),
                 "-device".into(),
-                format!("virtio-net-pci,mac={mac},netdev=user-net"),
+                format!("virtio-net-pci,mac={mac},netdev=net0"),
             ]);
         }
 
@@ -243,7 +255,7 @@ pub(crate) struct QemuConfig<'a> {
     smp: Option<u8>,
     cpu_model: Option<CpuModel>,
     cloud_init: Option<PathBuf>,
-    ssh: Option<SshConfig>,
+    net: Option<NetConfig>,
     ovmf: Option<PathBuf>,
     io_thread: bool,
 }
@@ -258,7 +270,7 @@ impl<'a> QemuConfig<'a> {
             smp: None,
             cpu_model: None,
             cloud_init: None,
-            ssh: None,
+            net: None,
             ovmf: None,
             io_thread: false,
         }
@@ -290,8 +302,8 @@ impl<'a> QemuConfig<'a> {
         self
     }
 
-    pub fn with_ssh(mut self, config: SshConfig) -> Self {
-        self.ssh = Some(config);
+    pub fn with_net(mut self, config: NetConfig) -> Self {
+        self.net = Some(config);
         self
     }
 
@@ -322,7 +334,7 @@ impl QemuProcess {
             smp,
             cpu_model,
             cloud_init,
-            ssh,
+            net,
             ovmf,
             io_thread,
         } = cfg;
@@ -347,7 +359,7 @@ impl QemuProcess {
             incoming,
             cpu_model,
             cloud_init,
-            ssh,
+            net,
             ovmf,
             io_thread,
             serial_log_path,

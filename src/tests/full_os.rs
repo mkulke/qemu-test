@@ -2,7 +2,7 @@ use crate::cloud_init::{CloudInitDisk, GUEST_USER};
 use crate::process::{
     CpuModel as Cpu, ExpectedOutput, Machine, QemuConfig, QemuPayload, QemuProcess,
 };
-use crate::util::SshConfig;
+use crate::util::NetConfig;
 use anyhow::{Context, Result, bail, ensure};
 use log::debug;
 use qapi::qmp;
@@ -15,10 +15,19 @@ const OS_IMAGE: &str = "payload/os-image.qcow2";
 const OVMF_CODE: &str = "payload/OVMF_CODE.fd";
 const BOOT_TIMEOUT: Duration = Duration::from_secs(45);
 const SSH_TIMEOUT: Duration = Duration::from_secs(10);
-const OS_READY_PATTERN: &str = r"Ubuntu (22|24).04.\d+ LTS cloud ttyS0";
+pub(crate) const OS_READY_PATTERN: &str = r"Ubuntu (22|24).04.\d+ LTS cloud ttyS0";
+pub(crate) const SSH_ARGS: [&str; 6] = [
+    "-o",
+    "StrictHostKeyChecking=no",
+    "-o",
+    "UserKnownHostsFile=/dev/null",
+    "-o",
+    "LogLevel=ERROR",
+];
 
 pub(crate) fn ssh_command(
     key_path: &Path,
+    host: &str,
     port: u16,
     user: &str,
     command: &str,
@@ -26,27 +35,24 @@ pub(crate) fn ssh_command(
 ) -> Result<String> {
     let start = Instant::now();
     loop {
-        let output = Command::new("timeout")
-            .args([
-                "10",
-                "ssh",
-                "-i",
-                &key_path.to_string_lossy(),
-                "-o",
-                "StrictHostKeyChecking=no",
-                "-o",
-                "UserKnownHostsFile=/dev/null",
-                "-o",
-                "ConnectTimeout=5",
-                "-o",
-                "BatchMode=yes",
-                "-o",
-                "LogLevel=ERROR",
-                "-p",
-                &port.to_string(),
-                &format!("{user}@localhost"),
-                command,
-            ])
+        let var_args = [
+            "-o",
+            "ConnectTimeout=5",
+            "-o",
+            "BatchMode=yes",
+            "-i",
+            &key_path.to_string_lossy(),
+            "-p",
+            &port.to_string(),
+            &format!("{user}@{host}"),
+            command,
+        ];
+
+        let mut args = SSH_ARGS.to_vec();
+        args.extend_from_slice(&var_args);
+
+        let output = Command::new("ssh")
+            .args(args)
             .output()
             .context("failed to run ssh")?;
 
@@ -90,8 +96,8 @@ pub(crate) fn test_os_boot(
 ) -> Result<()> {
     let tmp_dir = tempfile::tempdir().context("failed to create temp dir")?;
 
-    let ssh_config = SshConfig::new();
-    let ci = CloudInitDisk::create(tmp_dir.path(), ssh_config.mac())
+    let net_config = NetConfig::user_net();
+    let ci = CloudInitDisk::create(tmp_dir.path(), &net_config)
         .context("failed to create cloud-init disk")?;
 
     let payload = QemuPayload::DiskImage(OS_IMAGE.into());
@@ -100,7 +106,7 @@ pub(crate) fn test_os_boot(
         .with_cpu_model(cpu)
         .with_smp(smp)
         .with_cloud_init(ci.path.clone())
-        .with_ssh(ssh_config);
+        .with_net(net_config);
     if ovmf {
         cfg = cfg.with_ovmf(OVMF_CODE.into());
     }
@@ -125,6 +131,7 @@ pub(crate) fn test_os_boot(
 
     let hostname = ssh_command(
         &ci.ssh_key_path,
+        "localhost",
         ssh_port,
         GUEST_USER,
         "hostname",
