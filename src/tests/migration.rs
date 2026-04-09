@@ -147,6 +147,15 @@ impl Drop for SshSession {
     }
 }
 
+/// Parse the first field of `/proc/uptime` (seconds since boot).
+fn parse_uptime(raw: &str) -> Result<f64> {
+    raw.split_whitespace()
+        .next()
+        .context("empty uptime output")?
+        .parse()
+        .context("failed to parse uptime")
+}
+
 fn do_migration(
     src: &mut QemuProcess,
     dst: &mut QemuProcess,
@@ -310,10 +319,9 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8) -> Result<()> {
     )
     .context("failed to open SSH ControlMaster")?;
 
-    let kernel_before = session
-        .run("uname -r")
-        .context("pre-migration SSH check failed")?;
-    debug!("source kernel: {kernel_before}");
+    // Record uptime before migration
+    let uptime_before = parse_uptime(&session.run("cat /proc/uptime")?)?;
+    debug!("uptime before migration: {uptime_before:.1}s");
 
     // Spawn destination in incoming mode with its own cidata copy
     let dst_cfg = base_cfg
@@ -331,13 +339,11 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8) -> Result<()> {
     debug!("source VM terminated");
 
     // Verify the persistent SSH session survived migration
-    let kernel_after = session
-        .run("uname -r")
-        .context("post-migration SSH check failed — connection did not survive")?;
-    debug!("destination kernel: {kernel_after}");
+    let uptime_after = parse_uptime(&session.run("cat /proc/uptime")?)?;
+    debug!("uptime after migration: {uptime_after:.1}s");
     ensure!(
-        kernel_before == kernel_after,
-        "kernel version mismatch after migration: {kernel_before} vs {kernel_after}"
+        uptime_after > uptime_before,
+        "timer not advancing after migration: {uptime_before:.1}s -> {uptime_after:.1}s"
     );
 
     Ok(())
