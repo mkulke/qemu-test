@@ -30,4 +30,10 @@ jobs:
         run: make lint
 
       - name: Run tests
-        run: sudo -E env "PATH=$PATH" make run
+        run: sudo -E env "PATH=$PATH" make run TEST_JOBS=2
+
+      - name: Run os migration tests
+        run: |
+          sudo make setup-bridge
+          sudo make setup-taps NUM_TAPS=4
+          sudo -E env "PATH=$PATH" make run TEST_JOBS=2 TEST_FILTER=migration_os
