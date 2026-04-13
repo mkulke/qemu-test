@@ -1,0 +1,63 @@
+name: Functional Tests
+description: "Run QEMU functional tests"
+
+inputs:
+  qemu_bin:
+    description: "Path to the QEMU binary (relative to workspace root)"
+    required: false
+    default: "qemu-system-x86_64"
+  accel:
+    description: "Accelerator to use (kvm or mshv)"
+    required: false
+    default: "kvm"
+  test_filter:
+    description: "Test filter (e.g. 'kernel_boot', 'migration_os'). Empty runs default tests."
+    required: false
+  test_jobs:
+    description: "Number of parallel test jobs"
+    default: "2"
+    required: false
+
+runs:
+  using: 'composite'
+  steps:
+  - name: Check dependencies
+    working-directory: ${{ github.action_path }}
+    shell: bash
+    env:
+      QEMU_BIN: ${{ inputs.qemu_bin }}
+    run: make check-tools
+
+  - name: Install Rust
+    uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1.15.4
+
+  - name: Build tests
+    shell: bash
+    working-directory: ${{ github.action_path }}
+    run: make build-release
+
+  - name: Run tests
+    shell: bash
+    working-directory: ${{ github.action_path }}
+    env:
+      ACCEL: ${{ inputs.accel }}
+      QEMU_BIN: ${{ inputs.qemu_bin }}
+      TEST_FILTER: ${{ inputs.test_filter }}
+      TEST_JOBS: ${{ inputs.test_jobs }}
+    run: |
+      if [ -z "$TEST_FILTER" ]; then
+        unset TEST_FILTER
+      fi
+      sudo -E env "PATH=$PATH" make run-release
+
+  - name: Run os migration tests
+    working-directory: ${{ github.action_path }}
+    shell: bash
+    env:
+      ACCEL: ${{ inputs.accel }}
+      QEMU_BIN: ${{ inputs.qemu_bin }}
+      TEST_FILTER: ${{ inputs.test_filter }}
+      TEST_JOBS: ${{ inputs.test_jobs }}
+    run: |
+      sudo make setup-bridge NUM_TAPS=4
+      sudo -E env "PATH=$PATH" make run-release TEST_FILTER=migration_os

@@ -6,9 +6,11 @@ on:
   pull_request:
     branches: [main]
 
+permissions: {}
+
 jobs:
   ci:
-    runs-on: 'ubuntu-latest'
+    runs-on: 'ubuntu-24.04'
     steps:
       - name: Checkout test framework
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd #v6.0.2
@@ -18,7 +20,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y nasm wget build-essential
+          sudo apt-get install -y nasm wget gcc make
 
       - name: Check dependencies
         run: make check-build-tools
@@ -30,5 +32,17 @@ jobs:
         run: make lint
 
   kvm:
-    uses: ./.github/workflows/test.yml
-    permissions: {}
+    runs-on: 'ubuntu-24.04'
+    steps:
+      - name: Checkout test framework
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd #v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm qemu-system-x86 wget mtools
+
+      - name: Run functional tests
+        uses: ./
