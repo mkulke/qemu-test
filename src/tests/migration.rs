@@ -186,7 +186,7 @@ fn do_migration(
     Ok(())
 }
 
-#[test_fn]
+#[test_fn(skip = "migration not supported by mshv yet")]
 pub(crate) fn test_live_migration_simple() -> Result<()> {
     let src_dir = tempfile::tempdir().context("failed to create src temp dir")?;
     let dst_dir = tempfile::tempdir().context("failed to create dst temp dir")?;
@@ -215,6 +215,7 @@ pub(crate) fn test_live_migration_simple() -> Result<()> {
 #[test_fn(
     cpu = {Cpu::Qemu64, Cpu::Host},
     smp = {1, 2, 4},
+    skip = "migration not supported by mshv yet",
 )]
 pub(crate) fn test_live_migration_kernel(cpu: Cpu, smp: u8) -> Result<()> {
     let src_dir = tempfile::tempdir().context("failed to create src temp dir")?;
@@ -253,7 +254,7 @@ pub(crate) fn test_live_migration_kernel(cpu: Cpu, smp: u8) -> Result<()> {
 #[test_fn(
     machine = {Machine::Pc, Machine::Q35},
     smp = {1, 2, 4},
-    skip = "requires tap networking",
+    skip = "migration not supported by mshv yet",
 )]
 pub(crate) fn test_live_migration_os(machine: Machine, smp: u8) -> Result<()> {
     let src_dir = tempfile::tempdir().context("failed to create src temp dir")?;
