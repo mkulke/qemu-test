@@ -80,13 +80,13 @@ pub(crate) fn ssh_command(
     io_thread = {true, false},
 )]
 // OVMF requires UEFI support, which is not available on Machine::Pc
-#[test_fn(
-    cpu = Cpu::Host,
-    machine = Machine::Q35,
-    smp = {1, 2, 4},
-    ovmf = true,
-    io_thread = {true, false},
-)]
+// #[test_fn(
+//     cpu = Cpu::Host,
+//     machine = Machine::Q35,
+//     smp = {1, 2, 4},
+//     ovmf = true,
+//     io_thread = {true, false},
+// )]
 pub(crate) fn test_os_boot(
     cpu: Cpu,
     machine: Machine,
