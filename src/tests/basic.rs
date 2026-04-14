@@ -20,7 +20,7 @@ const PIO_STR_SUFFIX: usize = 16; // 'A' bytes after page boundary (0x11001..0x1
 const PIO_STR_READ_X: usize = 2; // 'X' bytes from page-crossing outsd readback (0x11011..0x11012)
 const PIO_STR_READ_Y: usize = 2; // 'Y' bytes from page-crossing outsd readback (0x11013..0x11014)
 
-#[test_fn()]
+#[test_fn]
 pub(crate) fn test_simple_guest_bin() -> Result<()> {
     let tmp_dir = tempfile::tempdir().context("failed to create temp dir")?;
     let guest_bin_path = tmp_dir.path().join("guest.bin");
@@ -44,7 +44,7 @@ pub(crate) fn test_simple_guest_bin() -> Result<()> {
 }
 
 // https://github.com/microsoft/qemu/issues/17
-#[test_fn()]
+#[test_fn(skip = "not fixed yet in upstream")]
 pub(crate) fn test_pio_str_guest_bin() -> Result<()> {
     let tmp_dir = tempfile::tempdir().context("failed to create temp dir")?;
     let guest_bin_path = tmp_dir.path().join("guest_pio_str.bin");
