@@ -4,6 +4,7 @@ use linkme::distributed_slice;
 use rand::seq::SliceRandom;
 use rayon::prelude::*;
 use std::cell::RefCell;
+use util::TestFilter;
 
 mod cloud_init;
 mod config;
@@ -37,7 +38,7 @@ fn main() -> Result<()> {
     env_logger::init();
 
     let test_jobs = CONFIG.test_jobs()?;
-    let filter: Option<Vec<&str>> = CONFIG.test_filter();
+    let filter: Option<TestFilter> = CONFIG.test_filter()?;
 
     let mut tests: Vec<&TestEntry> = TESTS
         .iter()
@@ -50,7 +51,13 @@ fn main() -> Result<()> {
                 }
                 return true;
             };
-            filter.iter().any(|f| label.contains(f))
+            let matches = filter.matches(&label, entry.2);
+            let skipped_by_annotation =
+                entry.2.is_some() && filter.matches(&label, None) && !matches;
+            if skipped_by_annotation && let Some(reason) = entry.2 {
+                println!("SKIP: {label} ({reason})");
+            }
+            matches
         })
         .collect();
 

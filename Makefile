@@ -39,12 +39,14 @@ build-payloads: check-build-tools $(PAYLOADS)
 
 build: build-payloads
 	cargo build
+	cargo test
 
 run: build check-tools
 	cargo run
 
 $(RELEASE_BIN): $(RUST_SOURCES) $(PAYLOADS)
-	cargo build --release --locked
+	cargo build --release --locked && \
+	cargo test --release --locked
 
 build-release: $(RELEASE_BIN)
 
