@@ -1,4 +1,5 @@
 use crate::process::Accelerator;
+use crate::util::TestFilter;
 use anyhow::{Context, Result};
 use std::env;
 use std::sync::LazyLock;
@@ -46,8 +47,11 @@ impl Config {
         Ok(jobs)
     }
 
-    pub fn test_filter(&self) -> Option<Vec<&str>> {
-        self.test_filter.as_deref().map(|f| f.split(',').collect())
+    pub fn test_filter(&self) -> Result<Option<TestFilter>> {
+        self.test_filter
+            .as_deref()
+            .map(TestFilter::parse)
+            .transpose()
     }
 
     pub fn keep_logs(&self) -> Option<&str> {
