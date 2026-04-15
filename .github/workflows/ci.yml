@@ -28,9 +28,6 @@ jobs:
       - name: Build
         run: make build
 
-      - name: Test
-        run: cargo test
-
       - name: Lint
         run: make lint
 

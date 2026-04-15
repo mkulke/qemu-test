@@ -39,6 +39,7 @@ build-payloads: check-build-tools $(PAYLOADS)
 
 build: build-payloads
 	cargo build
+	cargo test
 
 run: build check-tools
 	cargo run
@@ -47,6 +48,7 @@ $(RELEASE_BIN): $(RUST_SOURCES) $(PAYLOADS)
 	cargo build --release --locked
 
 build-release: $(RELEASE_BIN)
+	cargo test --release --locked
 
 run-release: $(RELEASE_BIN) check-tools
 	./$(RELEASE_BIN)
