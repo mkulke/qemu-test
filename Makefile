@@ -45,10 +45,10 @@ run: build check-tools
 	cargo run
 
 $(RELEASE_BIN): $(RUST_SOURCES) $(PAYLOADS)
-	cargo build --release --locked
+	cargo build --release --locked && \
+	cargo test --release --locked
 
 build-release: $(RELEASE_BIN)
-	cargo test --release --locked
 
 run-release: $(RELEASE_BIN) check-tools
 	./$(RELEASE_BIN)
