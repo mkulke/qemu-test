@@ -44,6 +44,7 @@ runs:
       QEMU_BIN: ${{ inputs.qemu_bin }}
       TEST_FILTER: ${{ inputs.test_filter }}
       TEST_JOBS: ${{ inputs.test_jobs }}
+      RUST_LOG: warn
     run: |
       if [ -z "$TEST_FILTER" ]; then
         unset TEST_FILTER
@@ -58,9 +59,10 @@ runs:
       QEMU_BIN: ${{ inputs.qemu_bin }}
       TEST_FILTER: ${{ inputs.test_filter }}
       TEST_JOBS: ${{ inputs.test_jobs }}
+      RUST_LOG: warn
     run: |
       sudo make setup-bridge NUM_TAPS=$((TEST_JOBS * 2))
-      sudo -E env "PATH=$PATH" make run-release TEST_FILTER=migration_os
+      sudo -E env "PATH=$PATH" make run-release "TEST_FILTER=migration_os${TEST_FILTER:+,$TEST_FILTER}"
 
   - name: Cleanup
     if: always()
@@ -68,4 +70,4 @@ runs:
     shell: bash
     env:
       TEST_JOBS: ${{ inputs.test_jobs }}
-    run: sudo make teardown-bridge NUM_TAPS=$((TEST_JOBS * 2))
+    run: sudo make teardown-bridge

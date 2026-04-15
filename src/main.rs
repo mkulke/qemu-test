@@ -1,6 +1,7 @@
 use anyhow::{Result, bail};
 use config::CONFIG;
 use linkme::distributed_slice;
+use log::warn;
 use rand::seq::SliceRandom;
 use rayon::prelude::*;
 use std::cell::RefCell;
@@ -63,8 +64,10 @@ fn main() -> Result<()> {
 
     tests.shuffle(&mut rand::rng());
 
-    if tests.is_empty() {
-        bail!("no tests matched filter: {:?}", filter);
+    if let Some(filter) = filter
+        && tests.is_empty()
+    {
+        warn!("no tests matched provided filter ({})", filter);
     }
 
     let pool = rayon::ThreadPoolBuilder::new()

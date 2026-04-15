@@ -1,8 +1,9 @@
 use crate::config::CONFIG;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use log::warn;
 use rand::RngExt;
 use regex::Regex;
+use std::fmt::Display;
 use std::path::Path;
 use std::sync::{LazyLock, Mutex};
 
@@ -39,7 +40,7 @@ impl TestFilter {
             };
 
             if !FILTER_TOKEN_RE.is_match(value) {
-                anyhow::bail!("invalid filter token: '{token}'. expected {FILTER_TOKEN_PATTERN}");
+                bail!("invalid filter token: '{token}'. expected {FILTER_TOKEN_PATTERN}");
             }
             target.push(value.to_string());
         }
@@ -57,6 +58,21 @@ impl TestFilter {
         }
 
         skip_reason.is_none()
+    }
+}
+
+impl Display for TestFilter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if !self.include.is_empty() {
+            write!(f, "include: {}", self.include.join("|"))?;
+            if !self.exclude.is_empty() {
+                write!(f, ", ")?;
+            }
+        }
+        if !self.exclude.is_empty() {
+            write!(f, "exclude: {}", self.exclude.join("|"))?;
+        }
+        Ok(())
     }
 }
 
