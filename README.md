@@ -51,6 +51,7 @@ make run TEST_FILTER=-migration,smp=2
 ```
 
 This runs tests matching `smp=2`, excluding tests whose label contains `migration`.
+If a test matches both positive and negative tokens, the negative token wins and the test is excluded.
 ## Skipping
 
 Tests can be annotated with `#[test_fn(skip = "reason")]` to skip them with a reason. Note that tests that are selected by the filter explicitly will be run even if they are annotated with skip.

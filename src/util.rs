@@ -14,12 +14,11 @@ pub(crate) fn generate_mac() -> String {
 
 const TAP_PREFIX: &str = "tap-qemu-";
 const GATEWAY: &str = "192.168.100.1";
+const FILTER_TOKEN_PATTERN: &str = r"^[a-z0-9]+(_[a-z0-9]+)*(=[a-z0-9]+(_[a-z0-9]+)*)?$";
 
 static TAP_POOL: Mutex<Option<Vec<usize>>> = Mutex::new(None);
-static FILTER_TOKEN_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^[a-z0-9]+(_[a-z0-9]+)*(=[a-z0-9]+(_[a-z0-9]+)*)?$")
-        .expect("invalid test filter token regex")
-});
+static FILTER_TOKEN_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(FILTER_TOKEN_PATTERN).expect("invalid test filter token regex"));
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TestFilter {
@@ -40,9 +39,7 @@ impl TestFilter {
             };
 
             if !FILTER_TOKEN_RE.is_match(value) {
-                anyhow::bail!(
-                    "invalid filter token: '{token}'. expected [a-z0-9]+(_[a-z0-9]+)*(=[a-z0-9]+(_[a-z0-9]+)*)?"
-                );
+                anyhow::bail!("invalid filter token: '{token}'. expected {FILTER_TOKEN_PATTERN}");
             }
             target.push(value.to_string());
         }
