@@ -16,8 +16,10 @@ const TAP_PREFIX: &str = "tap-qemu-";
 const GATEWAY: &str = "192.168.100.1";
 
 static TAP_POOL: Mutex<Option<Vec<usize>>> = Mutex::new(None);
-static FILTER_TOKEN_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[a-z0-9]+(_[a-z0-9]+)*(=[a-z0-9]+(_[a-z0-9]+)*)?$").unwrap());
+static FILTER_TOKEN_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[a-z0-9]+(_[a-z0-9]+)*(=[a-z0-9]+(_[a-z0-9]+)*)?$")
+        .expect("invalid test filter token regex")
+});
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TestFilter {
@@ -38,7 +40,9 @@ impl TestFilter {
             };
 
             if !FILTER_TOKEN_RE.is_match(value) {
-                anyhow::bail!("invalid filter token: '{token}'");
+                anyhow::bail!(
+                    "invalid filter token: '{token}'. expected [a-z0-9]+(_[a-z0-9]+)*(=[a-z0-9]+(_[a-z0-9]+)*)?"
+                );
             }
             target.push(value.to_string());
         }
@@ -213,7 +217,16 @@ mod tests {
 
     #[test]
     fn invalid_tokens_fail_validation() {
-        for token in ["-", "Migration", "smp=2,", "--migration"] {
+        for token in [
+            "",
+            "-",
+            "Migration",
+            "smp=2,",
+            "--migration",
+            "test-case",
+            "test.name",
+            "smp =2",
+        ] {
             assert!(
                 TestFilter::parse(token).is_err(),
                 "expected invalid: {token}"

@@ -52,10 +52,9 @@ fn main() -> Result<()> {
                 return true;
             };
             let matches = filter.matches(&label, entry.2);
-            if !matches
-                && let Some(reason) = entry.2
-                && filter.matches(&label, None)
-            {
+            let skipped_by_annotation =
+                entry.2.is_some() && filter.matches(&label, None) && !matches;
+            if skipped_by_annotation && let Some(reason) = entry.2 {
                 println!("SKIP: {label} ({reason})");
             }
             matches
