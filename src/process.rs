@@ -500,6 +500,9 @@ impl QemuProcess {
         let mut partial = Vec::new();
 
         loop {
+            if crate::SHUTDOWN.load(std::sync::atomic::Ordering::Relaxed) {
+                bail!("interrupted");
+            }
             if start.elapsed() > timeout {
                 bail!("timeout waiting for expected output");
             }
@@ -526,6 +529,9 @@ impl QemuProcess {
     pub fn poll_status(&mut self, expected_state: RunState) -> Result<()> {
         let start = std::time::Instant::now();
         loop {
+            if crate::SHUTDOWN.load(std::sync::atomic::Ordering::Relaxed) {
+                bail!("interrupted");
+            }
             if start.elapsed() > DEFAULT_TIMEOUT {
                 bail!("timed out waiting for expected status");
             }

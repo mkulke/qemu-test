@@ -35,6 +35,9 @@ pub(crate) fn ssh_command(
 ) -> Result<String> {
     let start = Instant::now();
     loop {
+        if crate::SHUTDOWN.load(std::sync::atomic::Ordering::Relaxed) {
+            bail!("interrupted");
+        }
         let var_args = [
             "-o",
             "ConnectTimeout=5",

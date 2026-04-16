@@ -5,6 +5,7 @@ use log::warn;
 use rand::seq::SliceRandom;
 use rayon::prelude::*;
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicBool, Ordering};
 use util::TestFilter;
 
 mod cloud_init;
@@ -23,7 +24,17 @@ thread_local! {
     pub static CURRENT_TEST_LABEL: RefCell<String> = const { RefCell::new(String::new()) };
 }
 
+/// Set by the SIGINT handler to request graceful shutdown.
+pub static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn sigint_handler(_: libc::c_int) {
+    SHUTDOWN.store(true, Ordering::Relaxed);
+}
+
 fn run_test(entry: &TestEntry) -> Result<()> {
+    if SHUTDOWN.load(Ordering::Relaxed) {
+        bail!("interrupted");
+    }
     let label = entry.0();
     CURRENT_TEST_LABEL.with(|l| *l.borrow_mut() = label.clone());
     println!("TEST: {label}");
@@ -37,6 +48,14 @@ fn run_test(entry: &TestEntry) -> Result<()> {
 
 fn main() -> Result<()> {
     env_logger::init();
+
+    // Install SIGINT handler for graceful shutdown with proper cleanup.
+    unsafe {
+        libc::signal(
+            libc::SIGINT,
+            sigint_handler as *const () as libc::sighandler_t,
+        );
+    }
 
     let test_jobs = CONFIG.test_jobs()?;
     let filter: Option<TestFilter> = CONFIG.test_filter()?;
