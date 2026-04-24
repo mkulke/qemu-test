@@ -18,8 +18,13 @@ const KERNEL: &str = "payload/vmlinuz-virt";
 const INITRD: &str = "payload/initrd.img";
 const OS_IMAGE: &str = "payload/os-image.qcow2";
 const OS_BOOT_TIMEOUT: Duration = Duration::from_secs(60);
+const MIGRATION_TIMEOUT: Duration = Duration::from_secs(10);
+const MIGRATION_STRESS_TIMEOUT: Duration = Duration::from_secs(60);
 const SSH_TIMEOUT: Duration = Duration::from_secs(30);
 const ECHO_PORT: u16 = 7777;
+const STRESS_NG_INSTALL_TIMEOUT: Duration = Duration::from_secs(120);
+const STRESS_NG_INSTALL_CMD: &str =
+    "sudo apt-get update -qq && sudo apt-get install -y -qq stress-ng";
 const ECHO_SERVER_CMD: &str = concat!(
     "nohup python3 -c '",
     "import socket; ",
@@ -76,6 +81,7 @@ fn do_migration(
     src: &mut QemuProcess,
     dst: &mut QemuProcess,
     mig_sock: &std::path::Path,
+    timeout: Duration,
 ) -> Result<()> {
     dst.qmp()
         .execute(&qmp::migrate_incoming {
@@ -96,7 +102,7 @@ fn do_migration(
         .context("source: migrate failed")?;
     debug!("source VM migration initiated");
 
-    dst.poll_status(RunState::running)?;
+    dst.poll_status(RunState::running, timeout)?;
     debug!("destination VM running");
 
     Ok(())
@@ -119,7 +125,7 @@ pub(crate) fn test_live_migration_simple() -> Result<()> {
     let cfg = cfg.with_incoming(&dst_dir);
     let mut dst = QemuProcess::spawn(cfg).context("failed to spawn dest VM")?;
 
-    do_migration(&mut src, &mut dst, &mig_sock)?;
+    do_migration(&mut src, &mut dst, &mig_sock, MIGRATION_TIMEOUT)?;
 
     let expected_output = ExpectedOutput::SubString(EXPECTED_OUTPUT.into());
     dst.poll_line(expected_output)
@@ -156,7 +162,7 @@ pub(crate) fn test_live_migration_kernel(cpu: Cpu, smp: u8) -> Result<()> {
     let cfg = cfg.with_incoming(&dst_dir);
     let mut dst = QemuProcess::spawn(cfg).context("failed to spawn dest VM")?;
 
-    do_migration(&mut src, &mut dst, &mig_sock)?;
+    do_migration(&mut src, &mut dst, &mig_sock, MIGRATION_TIMEOUT)?;
 
     // Verify init resumed on destination (produces "B" periodically)
     dst.poll_line(ExpectedOutput::SubString("INIT:ALIVE".into()))
@@ -166,12 +172,14 @@ pub(crate) fn test_live_migration_kernel(cpu: Cpu, smp: u8) -> Result<()> {
     Ok(())
 }
 
+// #[test_fn(machine = Machine::Q35, smp = 1)]
 #[test_fn(
     machine = {Machine::Pc, Machine::Q35},
     smp = {1, 2, 4},
+    stress_ng = {false, true},
     skip = "requires tap networking",
 )]
-pub(crate) fn test_live_migration_os(machine: Machine, smp: u8) -> Result<()> {
+pub(crate) fn test_live_migration_os(machine: Machine, smp: u8, stress_ng: bool) -> Result<()> {
     let src_dir = tempfile::tempdir().context("failed to create src temp dir")?;
     let dst_dir = tempfile::tempdir().context("failed to create dst temp dir")?;
     let mig_dir = tempfile::tempdir().context("failed to create migration temp dir")?;
@@ -236,6 +244,35 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8) -> Result<()> {
     .context("failed to start echo server")?;
     debug!("echo server started on guest port {ECHO_PORT}");
 
+    // Optionally install and start stress-ng to load the guest during migration
+    if stress_ng {
+        ssh_command(
+            &ci.ssh_key_path,
+            taps.guest_host(),
+            22,
+            GUEST_USER,
+            STRESS_NG_INSTALL_CMD,
+            STRESS_NG_INSTALL_TIMEOUT,
+        )
+        .context("failed to install stress-ng")?;
+        debug!("stress-ng installed");
+
+        let vm_bytes_mb = base_cfg.ram_mb() / 4;
+        let stress_ng_run_cmd = format!(
+            "nohup stress-ng --cpu 0 --vm 1 --vm-bytes {vm_bytes_mb}M --timeout 0 </dev/null >/dev/null 2>&1 &"
+        );
+        ssh_command(
+            &ci.ssh_key_path,
+            taps.guest_host(),
+            22,
+            GUEST_USER,
+            &stress_ng_run_cmd,
+            SSH_TIMEOUT,
+        )
+        .context("failed to start stress-ng")?;
+        debug!("stress-ng running in guest ({vm_bytes_mb}M vm-bytes)");
+    }
+
     // Open a persistent TCP connection to the echo server
     let mut stream = connect_echo(taps.guest_host(), ECHO_PORT, SSH_TIMEOUT)
         .context("failed to connect to echo server")?;
@@ -257,7 +294,12 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8) -> Result<()> {
     let mut dst = QemuProcess::spawn(dst_cfg).context("failed to spawn destination VM")?;
 
     // Migrate
-    do_migration(&mut src, &mut dst, &mig_sock)?;
+    let mig_timeout = if stress_ng {
+        MIGRATION_STRESS_TIMEOUT
+    } else {
+        MIGRATION_TIMEOUT
+    };
+    do_migration(&mut src, &mut dst, &mig_sock, mig_timeout)?;
     debug!("migration completed");
 
     // Drop source to free resources

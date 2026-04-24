@@ -261,6 +261,7 @@ pub(crate) struct QemuProcess {
 pub(crate) struct QemuConfig<'a> {
     temp_dir: &'a TempDir,
     payload: &'a QemuPayload,
+    ram_mb: u16,
     incoming: bool,
     machine: Machine,
     smp: Option<u8>,
@@ -274,9 +275,15 @@ pub(crate) struct QemuConfig<'a> {
 
 impl<'a> QemuConfig<'a> {
     pub fn new(temp_dir: &'a TempDir, payload: &'a QemuPayload) -> Self {
+        let ram_mb = match payload {
+            QemuPayload::GuestBin(_) => 32,
+            QemuPayload::Kernel { .. } => 256,
+            QemuPayload::DiskImage(_) => 1024,
+        };
         Self {
             temp_dir,
             payload,
+            ram_mb,
             incoming: false,
             machine: Machine::Pc,
             smp: None,
@@ -287,6 +294,10 @@ impl<'a> QemuConfig<'a> {
             io_thread: false,
             rtc_clock: None,
         }
+    }
+
+    pub fn ram_mb(&self) -> u16 {
+        self.ram_mb
     }
 
     pub fn with_incoming(mut self, temp_dir: &'a TempDir) -> Self {
@@ -347,6 +358,7 @@ impl QemuProcess {
         let QemuConfig {
             temp_dir,
             payload,
+            ram_mb,
             incoming,
             machine,
             smp,
@@ -359,12 +371,6 @@ impl QemuProcess {
         } = cfg;
         let qmp_sock_path = temp_dir.path().join("qmp.sock");
         let serial_log_path = temp_dir.path().join("serial.log");
-
-        let ram_mb = match payload {
-            QemuPayload::GuestBin(_) => 32,
-            QemuPayload::Kernel { .. } => 256,
-            QemuPayload::DiskImage(_) => 1024,
-        };
 
         let accel = CONFIG.accel()?;
 
@@ -526,13 +532,13 @@ impl QemuProcess {
         }
     }
 
-    pub fn poll_status(&mut self, expected_state: RunState) -> Result<()> {
+    pub fn poll_status(&mut self, expected_state: RunState, timeout: Duration) -> Result<()> {
         let start = std::time::Instant::now();
         loop {
             if crate::SHUTDOWN.load(std::sync::atomic::Ordering::Relaxed) {
                 bail!("interrupted");
             }
-            if start.elapsed() > DEFAULT_TIMEOUT {
+            if start.elapsed() > timeout {
                 bail!("timed out waiting for expected status");
             }
             let status = self

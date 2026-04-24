@@ -36,6 +36,10 @@ fn build_network_config(net: &NetConfig) -> String {
                   macaddress: \"{mac}\"
                 addresses:
                 - \"{guest_ip}\"
+                nameservers:
+                  addresses:
+                  - \"8.8.8.8\"
+                  - \"1.1.1.1\"
                 routes:
                 - to: \"default\"
                   via: \"{gateway}\"

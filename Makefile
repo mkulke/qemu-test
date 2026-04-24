@@ -16,6 +16,7 @@ REQUIRED_BUILD_TOOLS = cargo nasm wget gcc cpio gzip
 REQUIRED_TOOLS = $(QEMU_BIN) ssh-keygen mkdosfs mcopy
 BRIDGE_NAME = qemu-br0
 BRIDGE_ADDR = 192.168.100.1/24
+BRIDGE_SUBNET = 192.168.100.0/24
 TAP_PREFIX = tap-qemu
 NUM_TAPS ?= 2
 RELEASE_BIN = target/release/qemu-test
@@ -95,7 +96,9 @@ setup-bridge:
 	ip link add $(BRIDGE_NAME) type bridge
 	ip addr add $(BRIDGE_ADDR) dev $(BRIDGE_NAME)
 	ip link set $(BRIDGE_NAME) up
-	@echo "bridge $(BRIDGE_NAME) up with $(BRIDGE_ADDR)"
+	sysctl -w net.ipv4.ip_forward=1
+	iptables -t nat -A POSTROUTING -s $(BRIDGE_SUBNET) ! -o $(BRIDGE_NAME) -j MASQUERADE
+	@echo "bridge $(BRIDGE_NAME) up with $(BRIDGE_ADDR), NAT enabled"
 	@for i in $$(seq 0 $$(($(NUM_TAPS) - 1))); do \
 		ip tuntap add dev $(TAP_PREFIX)-$$i mode tap user $$USER; \
 		ip link set $(TAP_PREFIX)-$$i master $(BRIDGE_NAME); \
@@ -109,5 +112,6 @@ teardown-bridge:
 		ip link del $$name 2>/dev/null && \
 		echo "tap $$name removed" || true; \
 	done
+	iptables -t nat -D POSTROUTING -s $(BRIDGE_SUBNET) ! -o $(BRIDGE_NAME) -j MASQUERADE 2>/dev/null || true
 	ip link del $(BRIDGE_NAME)
 	@echo "bridge $(BRIDGE_NAME) removed"
