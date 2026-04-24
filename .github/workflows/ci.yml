@@ -39,11 +39,15 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Cache stress-ng binary
+      - name: Cache runtime payloads
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae #v5.0.5
         with:
-          path: payload/stress-ng
-          key: stress-ng-0.21.00
+          path: |
+            payload/stress-ng
+            payload/os-image.qcow2
+            payload/vmlinuz-virt
+            payload/OVMF_CODE.fd
+          key: payloads-${{ hashFiles('Makefile') }}
 
       - name: Install dependencies
         run: |
