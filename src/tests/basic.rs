@@ -11,6 +11,7 @@ use test_macro::test_fn;
 
 const GUEST_BIN: &[u8] = include_bytes!("../../payload/guest.bin");
 const GUEST_PIO_STR_BIN: &[u8] = include_bytes!("../../payload/guest_pio_str.bin");
+const GUEST_PIO_VMPORT_BIN: &[u8] = include_bytes!("../../payload/guest_pio_vmport.bin");
 const GUEST_MMIO_BIN: &[u8] = include_bytes!("../../payload/guest_mmio.bin");
 const GUEST_MMIO_REGS_BIN: &[u8] = include_bytes!("../../payload/guest_mmio_regs.bin");
 const KERNEL: &str = "payload/vmlinuz-virt";
@@ -113,11 +114,43 @@ pub(crate) fn test_mmio_guest_bin() -> Result<()> {
     Ok(())
 }
 
-#[test_fn(
-    machine = {Machine::Pc, Machine::Q35},
-    smp = {1, 2, 4},
-    cpu = [CpuModel::Qemu64, CpuModel::Host],
-)]
+// Test PIO with cpu_synchronize_state interaction via VMPort.
+//
+// VMPort (I/O port 0x5658) calls cpu_synchronize_state() during a port read,
+// which pulls all vCPU registers into QEMU's internal state and sets the dirty
+// flag. The vmport command handler then modifies GPRs directly on QEMU-side
+// state (e.g. setting EBX). If the PIO fast-path handler incorrectly clears
+// the dirty flag after writing only RIP+RAX to the hypervisor, the EBX change
+// will be lost and the guest sees stale register values.
+//
+// Tests:
+//   A = CMD_GETVERSION: EBX must change to VMPORT_MAGIC
+//   B = CMD_GETRAMSIZE: EBX must change to 0x1177
+//   C = Non-vmport GPRs (ESI, EDI, EBP) survive the round-trip
+#[test_fn()]
+pub(crate) fn test_pio_vmport() -> Result<()> {
+    let tmp_dir = tempfile::tempdir().context("failed to create temp dir")?;
+    let guest_bin_path = tmp_dir.path().join("guest_pio_vmport.bin");
+    fs::write(&guest_bin_path, GUEST_PIO_VMPORT_BIN).context("failed to write guest binary")?;
+    let payload = QemuPayload::GuestBin(guest_bin_path);
+    let cfg = QemuConfig::new(&tmp_dir, &payload);
+    let mut process = QemuProcess::spawn(cfg).context("failed to spawn QEMU process")?;
+
+    let status = process
+        .qmp()
+        .execute(&qmp::query_status {})
+        .context("query_status failed")?;
+    debug!("VM status: {:?}", status.status);
+
+    let expected_output = ExpectedOutput::SubString("ABC VMPORT_OK".into());
+    process
+        .poll_line(expected_output)
+        .context("VMPort PIO dirty-flag test failed")?;
+
+    Ok(())
+}
+
+#[test_fn(machine = {Machine::Pc, Machine::Q35}, smp = {1, 2, 4}, cpu = [CpuModel::Qemu64, CpuModel::Host])]
 pub(crate) fn test_kernel_boot(machine: Machine, smp: u8, cpu: Option<CpuModel>) -> Result<()> {
     let tmp_dir = tempfile::tempdir().context("failed to create temp dir")?;
     let payload = QemuPayload::Kernel {

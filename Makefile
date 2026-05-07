@@ -10,6 +10,8 @@ GUEST_AVX2_ASM = src/boot_avx2.asm
 GUEST_AVX2_BIN = payload/guest_avx2.bin
 GUEST_MMIO_ASM = src/boot_mmio.asm
 GUEST_MMIO_BIN = payload/guest_mmio.bin
+GUEST_PIO_VMPORT_ASM = src/boot_pio_vmport.asm
+GUEST_PIO_VMPORT_BIN = payload/guest_pio_vmport.bin
 GUEST_MMIO_REGS_ASM = src/boot_mmio_regs.asm
 GUEST_MMIO_REGS_C = src/mmio_regs.c
 GUEST_MMIO_REGS_LD = src/mmio_regs.ld
@@ -34,6 +36,7 @@ RELEASE_BIN = target/release/qemu-test
 RUST_SOURCES := $(shell find src -name "*.rs") build.rs Cargo.toml Cargo.lock
 EMBEDDED_PAYLOADS = $(GUEST_BIN) \
 		   $(GUEST_PIO_STR_BIN) \
+		   $(GUEST_PIO_VMPORT_BIN) \
 		   $(GUEST_AVX2_BIN) \
 		   $(GUEST_MMIO_BIN) \
 		   $(GUEST_MMIO_REGS_BIN)
@@ -95,6 +98,9 @@ $(GUEST_AVX2_BIN): $(GUEST_AVX2_ASM)
 	nasm -f bin -o $@ $<
 
 $(GUEST_MMIO_BIN): $(GUEST_MMIO_ASM)
+	nasm -f bin -o $@ $<
+
+$(GUEST_PIO_VMPORT_BIN): $(GUEST_PIO_VMPORT_ASM)
 	nasm -f bin -o $@ $<
 
 $(GUEST_MMIO_REGS_BIN): $(GUEST_MMIO_REGS_ASM) $(GUEST_MMIO_REGS_C) $(GUEST_MMIO_REGS_LD)
