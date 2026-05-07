@@ -26,7 +26,11 @@
 ; Expected serial output on success: "ABC VMPORT_OK\r\n"
 ; A lowercase letter indicates which test failed.
 ;
-; Assemble: nasm -f bin -o guest_pio_vmport.bin boot_pio_vmport.asm
+; Assemble: nasm -I src/asm -f bin -o guest_pio_vmport.bin boot_pio_vmport.asm
+
+%include "pm32.inc"
+%include "gdt32.inc"
+%include "serial32.inc"
 
 VMPORT_MAGIC    equ 0x564D5868
 VMPORT_PORT     equ 0x5658
@@ -34,36 +38,11 @@ CMD_GETVERSION  equ 10
 CMD_GETRAMSIZE  equ 20
 RAMSIZE_EBX     equ 0x1177
 
-SERIAL_DATA     equ 0x3F8
-SERIAL_LSR      equ 0x3FD
-
 MAGIC_ESI       equ 0xABCD1234
 MAGIC_EDI       equ 0x87654321
 MAGIC_EBP       equ 0xFEEDFACE
 
-; ──────────────────────────────────────────────
-; 16-bit real-mode entry
-; ──────────────────────────────────────────────
-[bits 16]
-[org 0x7c00]
-
-start:
-    cli
-    lgdt [gdtdesc]
-    mov eax, 1
-    mov cr0, eax
-    jmp 0x08:start32
-
-; ──────────────────────────────────────────────
-; 32-bit protected-mode code
-; ──────────────────────────────────────────────
-[bits 32]
-start32:
-    mov ax, 0x10
-    mov ds, ax
-    mov es, ax
-    mov ss, ax
-    mov esp, 0x7c00
+ENTER_PMODE32
 
     ; ==================================================================
     ; Test A: CMD_GETVERSION — EBX must be set to VMPORT_MAGIC
@@ -150,40 +129,9 @@ start32:
     jmp $ - 1
 
 ; ──────────────────────────────────────────────
-; serial_out — send byte in AL to COM1
-;   Waits for TX-ready, preserves all regs except EFLAGS
+; Serial output routines
 ; ──────────────────────────────────────────────
-serial_out:
-    push eax
-    push edx
-.wait:
-    mov dx, SERIAL_LSR
-    in al, dx
-    test al, 0x20
-    jz .wait
-    pop edx
-    pop eax
-    push edx
-    mov dx, SERIAL_DATA
-    out dx, al
-    pop edx
-    ret
-
-; ──────────────────────────────────────────────
-; serial_out_string — send NUL-terminated string at ESI
-;   Preserves ESI
-; ──────────────────────────────────────────────
-serial_out_string:
-    push esi
-.next:
-    lodsb
-    test al, al
-    jz .done
-    call serial_out
-    jmp .next
-.done:
-    pop esi
-    ret
+SERIAL32
 
 ; ──────────────────────────────────────────────
 ; Data
@@ -191,18 +139,9 @@ serial_out_string:
 ok_msg: db "VMPORT_OK", 13, 10, 0
 
 ; ──────────────────────────────────────────────
-; GDT — flat 32-bit code + data segments
+; GDT
 ; ──────────────────────────────────────────────
-align 4
-gdt:
-    dq 0
-    dw 0xFFFF, 0
-    db 0, 0x9A, 0xCF, 0
-    dw 0xFFFF, 0
-    db 0, 0x92, 0xCF, 0
-gdtdesc:
-    dw gdtdesc - gdt - 1
-    dd gdt
+GDT32
 
 ; ──────────────────────────────────────────────
 ; Boot signature + padding

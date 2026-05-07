@@ -37,14 +37,15 @@
 ; Expected serial output on success: "ABCDE MMIO_OK\r\n"
 ; A lowercase letter indicates which test failed first.
 ;
-; Assemble: nasm -f bin -o guest_mmio.bin boot_mmio.asm
+; Assemble: nasm -I src/asm -f bin -o guest_mmio.bin boot_mmio.asm
+
+%include "pm32.inc"
+%include "gdt32.inc"
+%include "serial32.inc"
 
 IOAPIC_BASE equ 0xFEC00000
 IOREGSEL    equ IOAPIC_BASE + 0x00      ; register selector (R/W)
 IOWIN       equ IOAPIC_BASE + 0x10      ; data window
-
-SERIAL_DATA equ 0x3F8                   ; COM1 THR
-SERIAL_LSR  equ 0x3FD                   ; COM1 Line Status Register
 
 ; Magic GPR values for T2 – deliberately asymmetric so every swap is visible
 MAGIC_EBX   equ 0xDEADBEEF
@@ -54,29 +55,7 @@ MAGIC_ESI   equ 0xABCD1234
 MAGIC_EDI   equ 0x87654321
 MAGIC_EBP   equ 0xFEEDFACE
 
-; ──────────────────────────────────────────────
-; 16-bit real-mode entry
-; ──────────────────────────────────────────────
-[bits 16]
-[org 0x7c00]
-
-start:
-    cli
-    lgdt [gdtdesc]
-    mov eax, 1
-    mov cr0, eax                    ; protected mode
-    jmp 0x08:start32                ; far jump to 32-bit CS
-
-; ──────────────────────────────────────────────
-; 32-bit protected-mode code
-; ──────────────────────────────────────────────
-[bits 32]
-start32:
-    mov ax, 0x10                    ; flat data segment
-    mov ds, ax
-    mov es, ax
-    mov ss, ax
-    mov esp, 0x7c00
+ENTER_PMODE32
 
     ; ==================================================================
     ; T1: Basic MMIO write + read
@@ -240,40 +219,9 @@ start32:
     jmp $ - 1                       ; safety: loop on wake
 
 ; ──────────────────────────────────────────────
-; serial_out — send byte in AL to COM1
-;   Waits for TX-ready, preserves all regs except EFLAGS
+; Serial output routines
 ; ──────────────────────────────────────────────
-serial_out:
-    push eax
-    push edx
-.wait:
-    mov dx, SERIAL_LSR
-    in al, dx
-    test al, 0x20                   ; TX holding register empty?
-    jz .wait
-    pop edx
-    pop eax                         ; restore original AL
-    push edx
-    mov dx, SERIAL_DATA
-    out dx, al
-    pop edx
-    ret
-
-; ──────────────────────────────────────────────
-; serial_out_string — send NUL-terminated string at ESI
-;   Preserves ESI
-; ──────────────────────────────────────────────
-serial_out_string:
-    push esi
-.next:
-    lodsb
-    test al, al
-    jz .done
-    call serial_out
-    jmp .next
-.done:
-    pop esi
-    ret
+SERIAL32
 
 ; ──────────────────────────────────────────────
 ; Data
@@ -281,20 +229,9 @@ serial_out_string:
 ok_msg: db "MMIO_OK", 13, 10, 0
 
 ; ──────────────────────────────────────────────
-; GDT — flat 32-bit code + data segments
+; GDT
 ; ──────────────────────────────────────────────
-align 4
-gdt:
-    dq 0                            ; null descriptor
-    ; code: base=0 limit=4G 32-bit execute/read DPL=0
-    dw 0xFFFF, 0
-    db 0, 0x9A, 0xCF, 0
-    ; data: base=0 limit=4G 32-bit read/write DPL=0
-    dw 0xFFFF, 0
-    db 0, 0x92, 0xCF, 0
-gdtdesc:
-    dw gdtdesc - gdt - 1            ; limit
-    dd gdt                          ; base
+GDT32
 
 ; ──────────────────────────────────────────────
 ; Boot signature + padding

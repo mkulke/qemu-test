@@ -23,7 +23,11 @@
 ; go through read_memory/write_memory. Serial output uses byte-by-byte
 ; non-string PIO (out dx, al), and buffer reads use MOV (hardware page walk).
 ;
-; Assemble with: nasm -f bin -o guest_pio_str.bin boot_pio_str.asm
+; Assemble with: nasm -I src/asm -f bin -o guest_pio_str.bin boot_pio_str.asm
+
+%include "pm32.inc"
+%include "gdt32.inc"
+%include "serial32.inc"
 
 BUFFER       equ 0x10000       ; 12KB work buffer (page-aligned)
 INSD_TARGET  equ 0x10FFD       ; 3 bytes before page boundary at 0x11000
@@ -39,23 +43,7 @@ PAGE_TABLE   equ 0x21000       ; page table for first 4MB (4KB)
 REMAP_PHYS   equ 0x30000       ; physical page backing virtual 0x12000
 REMAP_PHYS2  equ 0x31000       ; physical page backing virtual 0x11000
 
-[bits 16]
-[org 0x7c00]
-
-start:
-    cli
-    lgdt [gdtdesc]
-    mov eax, 1
-    mov cr0, eax            ; enable protected mode
-    jmp 0x08:start32        ; far jump to 32-bit code segment
-
-[bits 32]
-start32:
-    mov ax, 0x10            ; data segment selector
-    mov ds, ax
-    mov es, ax
-    mov ss, ax
-    mov esp, 0x7c00
+ENTER_PMODE32
 
     ; --- Set up 32-bit paging ---
     ; First enable paging with a pure identity map, then modify PTEs and INVLPG.
@@ -165,15 +153,8 @@ main_loop:
     mov esi, OUTPUT_START
     mov ecx, (OUTPUT_END - OUTPUT_START) + marker_len
 .next_byte:
-    mov bl, [esi]           ; hardware page walk — correct GVA→GPA
-.wait_tx:
-    mov dx, 0x3fd           ; Line Status Register
-    in al, dx
-    test al, 0x20           ; TX holding register empty?
-    jz .wait_tx
-    mov al, bl
-    mov dx, 0x3f8           ; COM1 data register
-    out dx, al              ; non-string PIO — bypasses read_memory
+    mov al, [esi]           ; hardware page walk — correct GVA→GPA
+    call serial_out         ; non-string PIO — bypasses read_memory
     inc esi
     dec ecx
     jnz .next_byte
@@ -188,20 +169,9 @@ main_loop:
 marker: db "HELLO VIA OUTSB", 13, 10
 marker_len equ $ - marker
 
-; GDT with null, code, and data segments
-align 4
-gdt:
-    dq 0                    ; null descriptor
-    ; code segment: base=0, limit=4GB, 32-bit, execute/read, DPL=0
-    dw 0xFFFF, 0
-    db 0, 0x9A, 0xCF, 0
-    ; data segment: base=0, limit=4GB, 32-bit, read/write, DPL=0
-    dw 0xFFFF, 0
-    db 0, 0x92, 0xCF, 0
+SERIAL32
 
-gdtdesc:
-    dw gdtdesc - gdt - 1    ; limit
-    dd gdt                  ; base address
+GDT32
 
 ; Pad to 510 bytes and add boot signature
 times 510 - ($ - $$) db 0

@@ -8,9 +8,11 @@
 ; them into memory at 0x7E00 before switching to protected mode.
 ;
 ; Build (see Makefile):
-;   nasm -f elf32 -o boot_stub.o boot_mmio_regs.asm
+;   nasm -I src/asm -f elf32 -o boot_stub.o boot_mmio_regs.asm
 ;   gcc -m32 -ffreestanding -c -o mmio_regs.o mmio_regs.c
 ;   ld -m elf_i386 -T mmio_regs.ld -o guest_mmio_regs.bin boot_stub.o mmio_regs.o
+
+%include "gdt32.inc"
 
 [bits 16]
 section .boot
@@ -64,15 +66,4 @@ start32:
 ; ──────────────────────────────────────────────
 ; GDT — flat 32-bit code + data segments
 ; ──────────────────────────────────────────────
-align 4
-gdt:
-    dq 0                            ; null descriptor
-    ; code: base=0 limit=4G 32-bit execute/read DPL=0
-    dw 0xFFFF, 0
-    db 0, 0x9A, 0xCF, 0
-    ; data: base=0 limit=4G 32-bit read/write DPL=0
-    dw 0xFFFF, 0
-    db 0, 0x92, 0xCF, 0
-gdtdesc:
-    dw gdtdesc - gdt - 1            ; limit
-    dd gdt                          ; base
+GDT32

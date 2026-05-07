@@ -2,20 +2,21 @@ STRESS_NG_VERSION = 0.21.00
 STRESS_NG_URL = https://github.com/ColinIanKing/stress-ng/archive/refs/tags/V$(STRESS_NG_VERSION).tar.gz
 STRESS_NG_SHA256 = 1339cbc6ccbff7e2ee2177bf0fd67e7b94e8ff7b07fe89bcfaec0280d800cf34
 STRESS_NG_BIN = payload/stress-ng
-GUEST_ASM = src/boot.asm
+GUEST_ASM = src/asm/boot.asm
 GUEST_BIN = payload/guest.bin
-GUEST_PIO_STR_ASM = src/boot_pio_str.asm
+GUEST_PIO_STR_ASM = src/asm/boot_pio_str.asm
 GUEST_PIO_STR_BIN = payload/guest_pio_str.bin
-GUEST_AVX2_ASM = src/boot_avx2.asm
+GUEST_AVX2_ASM = src/asm/boot_avx2.asm
 GUEST_AVX2_BIN = payload/guest_avx2.bin
-GUEST_MMIO_ASM = src/boot_mmio.asm
+GUEST_MMIO_ASM = src/asm/boot_mmio.asm
 GUEST_MMIO_BIN = payload/guest_mmio.bin
-GUEST_PIO_VMPORT_ASM = src/boot_pio_vmport.asm
+GUEST_PIO_VMPORT_ASM = src/asm/boot_pio_vmport.asm
 GUEST_PIO_VMPORT_BIN = payload/guest_pio_vmport.bin
-GUEST_MMIO_REGS_ASM = src/boot_mmio_regs.asm
+GUEST_MMIO_REGS_ASM = src/asm/boot_mmio_regs.asm
 GUEST_MMIO_REGS_C = src/mmio_regs.c
 GUEST_MMIO_REGS_LD = src/mmio_regs.ld
 GUEST_MMIO_REGS_BIN = payload/guest_mmio_regs.bin
+ASM_INCLUDES = $(wildcard src/asm/*.inc)
 VMLINUZ = payload/vmlinuz-virt
 INITRD = payload/initrd.img
 INIT_BIN = payload/init
@@ -88,23 +89,23 @@ $(VMLINUZ):
 	cd payload && \
 	wget -q $(ALPINE_URL) -O - | tar xzf - boot/vmlinuz-virt --strip-components 1
 
-$(GUEST_BIN): $(GUEST_ASM)
-	nasm -f bin -o $@ $<
+$(GUEST_BIN): $(GUEST_ASM) $(ASM_INCLUDES)
+	nasm -I src/asm/ -f bin -o $@ $<
 
-$(GUEST_PIO_STR_BIN): $(GUEST_PIO_STR_ASM)
-	nasm -f bin -o $@ $<
+$(GUEST_PIO_STR_BIN): $(GUEST_PIO_STR_ASM) $(ASM_INCLUDES)
+	nasm -I src/asm/ -f bin -o $@ $<
 
 $(GUEST_AVX2_BIN): $(GUEST_AVX2_ASM)
 	nasm -f bin -o $@ $<
 
-$(GUEST_MMIO_BIN): $(GUEST_MMIO_ASM)
-	nasm -f bin -o $@ $<
+$(GUEST_MMIO_BIN): $(GUEST_MMIO_ASM) $(ASM_INCLUDES)
+	nasm -I src/asm/ -f bin -o $@ $<
 
-$(GUEST_PIO_VMPORT_BIN): $(GUEST_PIO_VMPORT_ASM)
-	nasm -f bin -o $@ $<
+$(GUEST_PIO_VMPORT_BIN): $(GUEST_PIO_VMPORT_ASM) $(ASM_INCLUDES)
+	nasm -I src/asm/ -f bin -o $@ $<
 
-$(GUEST_MMIO_REGS_BIN): $(GUEST_MMIO_REGS_ASM) $(GUEST_MMIO_REGS_C) $(GUEST_MMIO_REGS_LD)
-	nasm -f elf32 -o payload/boot_stub_regs.o $(GUEST_MMIO_REGS_ASM)
+$(GUEST_MMIO_REGS_BIN): $(GUEST_MMIO_REGS_ASM) $(GUEST_MMIO_REGS_C) $(GUEST_MMIO_REGS_LD) $(ASM_INCLUDES)
+	nasm -I src/asm/ -f elf32 -o payload/boot_stub_regs.o $(GUEST_MMIO_REGS_ASM)
 	gcc -m32 -ffreestanding -fno-pie -fno-stack-protector -fomit-frame-pointer -masm=intel -c -o payload/mmio_regs.o $(GUEST_MMIO_REGS_C)
 	ld -m elf_i386 -T $(GUEST_MMIO_REGS_LD) -o $@ payload/boot_stub_regs.o payload/mmio_regs.o
 	truncate -s 8192 $@
