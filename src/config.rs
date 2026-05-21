@@ -1,3 +1,4 @@
+use crate::output::OutputFormat;
 use crate::process::Accelerator;
 use crate::util::TestFilter;
 use anyhow::{Context, Result};
@@ -11,6 +12,7 @@ pub(crate) struct Config {
     test_filter: Option<String>,
     test_repeat: Option<String>,
     keep_logs: Option<String>,
+    test_output: Option<String>,
 }
 
 pub(crate) static CONFIG: LazyLock<Config> = LazyLock::new(|| Config {
@@ -20,6 +22,7 @@ pub(crate) static CONFIG: LazyLock<Config> = LazyLock::new(|| Config {
     test_filter: env::var("TEST_FILTER").ok(),
     test_repeat: env::var("TEST_REPEAT").ok(),
     keep_logs: env::var("KEEP_LOGS").ok(),
+    test_output: env::var("TEST_OUTPUT").ok(),
 });
 
 const DEFAULT_ACCELERATOR: Accelerator = Accelerator::Kvm;
@@ -69,5 +72,12 @@ impl Config {
             anyhow::bail!("TEST_REPEAT must be at least 1");
         }
         Ok(repeat)
+    }
+
+    pub fn test_output(&self) -> Result<OutputFormat> {
+        let Some(value) = self.test_output.as_deref() else {
+            return Ok(OutputFormat::default());
+        };
+        value.try_into()
     }
 }

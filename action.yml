@@ -21,6 +21,10 @@ inputs:
     description: "Skip migration OS tests (true/false)"
     default: "false"
     required: false
+  test_output:
+    description: "Test output format (text|dot|junit)"
+    default: "text"
+    required: false
 
 runs:
   using: 'composite'
@@ -67,6 +71,7 @@ runs:
       QEMU_BIN: ${{ inputs.qemu_bin }}
       TEST_FILTER: ${{ inputs.test_filter }}
       TEST_JOBS: ${{ inputs.test_jobs }}
+      TEST_OUTPUT: ${{ inputs.test_output }}
       RUST_LOG: warn
     run: |
       if [ -z "$TEST_FILTER" ]; then
@@ -83,6 +88,7 @@ runs:
       QEMU_BIN: ${{ inputs.qemu_bin }}
       TEST_FILTER: ${{ inputs.test_filter }}
       TEST_JOBS: ${{ inputs.test_jobs }}
+      TEST_OUTPUT: ${{ inputs.test_output }}
       RUST_LOG: warn
     run: |
       sudo make setup-bridge NUM_TAPS=$((TEST_JOBS * 2))
