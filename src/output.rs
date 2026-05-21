@@ -4,8 +4,6 @@ use std::time::Duration;
 
 use anyhow::{Result, bail};
 
-const JUNIT_OUTPUT_FILE: &str = "test-results.xml";
-
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) enum OutputFormat {
     #[default]
@@ -22,7 +20,10 @@ impl TryFrom<&str> for OutputFormat {
             "text" => Ok(Self::Text),
             "dot" => Ok(Self::Dot),
             "junit" => Ok(Self::Junit),
-            _ => bail!("invalid TEST_OUTPUT value: '{}' (expected text|dot|junit)", value),
+            _ => bail!(
+                "invalid TEST_OUTPUT value: '{}' (expected text|dot|junit)",
+                value
+            ),
         }
     }
 }
@@ -52,7 +53,11 @@ pub(crate) fn print_test_result(format: OutputFormat, result: &TestResult) {
     match format {
         OutputFormat::Text => match &result.outcome {
             TestOutcome::Pass => {
-                println!("PASS: {} ({:.2}s)", result.label, result.duration.as_secs_f64())
+                println!(
+                    "PASS: {} ({:.2}s)",
+                    result.label,
+                    result.duration.as_secs_f64()
+                )
             }
             TestOutcome::Fail(e) => {
                 println!(
@@ -67,8 +72,14 @@ pub(crate) fn print_test_result(format: OutputFormat, result: &TestResult) {
             }
         },
         OutputFormat::Dot => match &result.outcome {
-            TestOutcome::Pass => { print!("."); let _ = std::io::stdout().flush(); }
-            TestOutcome::Fail(_) => { print!("F"); let _ = std::io::stdout().flush(); }
+            TestOutcome::Pass => {
+                print!(".");
+                let _ = std::io::stdout().flush();
+            }
+            TestOutcome::Fail(_) => {
+                print!("F");
+                let _ = std::io::stdout().flush();
+            }
             TestOutcome::Skip(_) => {}
         },
         OutputFormat::Junit => {}
@@ -79,6 +90,7 @@ pub(crate) fn print_summary(
     format: OutputFormat,
     results: &[TestResult],
     total_duration: Duration,
+    junit_path: &str,
 ) {
     match format {
         OutputFormat::Text => {
@@ -139,9 +151,8 @@ pub(crate) fn print_summary(
         }
         OutputFormat::Junit => {
             let xml = format_junit(results, total_duration);
-            std::fs::write(JUNIT_OUTPUT_FILE, &xml)
-                .expect("failed to write JUnit report");
-            println!("JUnit report written to {JUNIT_OUTPUT_FILE}");
+            std::fs::write(junit_path, &xml).expect("failed to write JUnit report");
+            println!("JUnit report written to {junit_path}");
         }
     }
 }
@@ -210,12 +221,7 @@ fn format_junit(results: &[TestResult], total_duration: Duration) -> String {
                     r#"    <testcase name="{name}" classname="qemu-test" time="{time}">"#
                 )
                 .unwrap();
-                writeln!(
-                    xml,
-                    r#"      <skipped message="{}" />"#,
-                    xml_escape(reason)
-                )
-                .unwrap();
+                writeln!(xml, r#"      <skipped message="{}" />"#, xml_escape(reason)).unwrap();
                 writeln!(xml, r#"    </testcase>"#).unwrap();
             }
         }

@@ -1,7 +1,11 @@
-use anyhow::{Result, bail};
+use anyhow::Result;
 use config::CONFIG;
 use linkme::distributed_slice;
 use log::warn;
+use output::{
+    OutputFormat, TestOutcome, TestResult, has_failures, print_summary, print_test_result,
+    print_test_start,
+};
 use rand::seq::SliceRandom;
 use rayon::prelude::*;
 use std::cell::RefCell;
@@ -10,6 +14,7 @@ use util::TestFilter;
 
 mod cloud_init;
 mod config;
+mod output;
 mod process;
 mod tests;
 mod util;
@@ -31,19 +36,34 @@ extern "C" fn sigint_handler(_: libc::c_int) {
     SHUTDOWN.store(true, Ordering::Relaxed);
 }
 
-fn run_test(entry: &TestEntry) -> Result<()> {
-    if SHUTDOWN.load(Ordering::Relaxed) {
-        bail!("interrupted");
-    }
+fn run_test(entry: &TestEntry, format: OutputFormat) -> TestResult {
     let label = entry.0();
     CURRENT_TEST_LABEL.with(|l| *l.borrow_mut() = label.clone());
-    println!("TEST: {label}");
+
+    if SHUTDOWN.load(Ordering::Relaxed) {
+        let result = TestResult {
+            label,
+            outcome: TestOutcome::Fail("interrupted".to_string()),
+            duration: std::time::Duration::ZERO,
+        };
+        print_test_result(format, &result);
+        return result;
+    }
+
+    print_test_start(format, &label);
     let start = std::time::Instant::now();
-    let result = (entry.1)();
-    let elapsed = start.elapsed();
+    let outcome = match (entry.1)() {
+        Ok(()) => TestOutcome::Pass,
+        Err(e) => TestOutcome::Fail(format!("{e}")),
+    };
+    let duration = start.elapsed();
+    let result = TestResult {
+        label,
+        outcome,
+        duration,
+    };
+    print_test_result(format, &result);
     result
-        .inspect(|_| println!("PASS: {label} ({:.2}s)", elapsed.as_secs_f64()))
-        .inspect_err(|e| println!("FAIL: {label}: {e} ({:.2}s)", elapsed.as_secs_f64()))
 }
 
 fn main() -> Result<()> {
@@ -60,6 +80,9 @@ fn main() -> Result<()> {
     let test_jobs = CONFIG.test_jobs()?;
     let test_repeat = CONFIG.test_repeat()?;
     let filter: Option<TestFilter> = CONFIG.test_filter()?;
+    let format = CONFIG.test_output()?;
+
+    let mut skip_results: Vec<TestResult> = Vec::new();
 
     let tests: Vec<&TestEntry> = TESTS
         .iter()
@@ -67,7 +90,13 @@ fn main() -> Result<()> {
             let label = entry.0();
             let Some(filter) = &filter else {
                 if let Some(reason) = entry.2 {
-                    println!("SKIP: {label} ({reason})");
+                    let result = TestResult {
+                        label: label.clone(),
+                        outcome: TestOutcome::Skip(reason.to_string()),
+                        duration: std::time::Duration::ZERO,
+                    };
+                    print_test_result(format, &result);
+                    skip_results.push(result);
                     return false;
                 }
                 return true;
@@ -76,7 +105,13 @@ fn main() -> Result<()> {
             let skipped_by_annotation =
                 entry.2.is_some() && filter.matches(&label, None) && !matches;
             if skipped_by_annotation && let Some(reason) = entry.2 {
-                println!("SKIP: {label} ({reason})");
+                let result = TestResult {
+                    label: label.clone(),
+                    outcome: TestOutcome::Skip(reason.to_string()),
+                    duration: std::time::Duration::ZERO,
+                };
+                print_test_result(format, &result);
+                skip_results.push(result);
             }
             matches
         })
@@ -97,30 +132,22 @@ fn main() -> Result<()> {
         .expect("failed to build thread pool");
 
     let start = std::time::Instant::now();
-    let errors: Vec<_> = pool.install(|| {
+    let mut results: Vec<TestResult> = pool.install(|| {
         tests
             .par_iter()
-            .filter_map(|entry| run_test(entry).err())
+            .map(|entry| run_test(entry, format))
             .collect()
     });
     let elapsed = start.elapsed();
 
-    if !errors.is_empty() {
-        for e in &errors {
-            eprintln!("{e:?}");
-        }
-        bail!(
-            "FAIL: {} of {} tests failed ({:.2}s)",
-            errors.len(),
-            tests.len(),
-            elapsed.as_secs_f64()
-        );
+    results.extend(skip_results);
+    let failed = has_failures(&results);
+    let junit_path = CONFIG.test_junit_result_path();
+    print_summary(format, &results, elapsed, junit_path);
+
+    if failed {
+        std::process::exit(1);
     }
 
-    println!(
-        "\nPASS: All {} tests passed ({:.2}s)",
-        tests.len(),
-        elapsed.as_secs_f64()
-    );
     Ok(())
 }
