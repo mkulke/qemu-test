@@ -547,6 +547,35 @@ impl QemuProcess {
         }
     }
 
+    /// Send QMP `quit` and wait for the QEMU process to terminate within the
+    /// given timeout. Returns an error if the process does not exit in time.
+    pub fn quit_and_wait(mut self, timeout: Duration) -> Result<()> {
+        self.qmp.execute(&qmp::quit {}).context("QMP quit failed")?;
+
+        let start = Instant::now();
+        loop {
+            match self.child.try_wait().context("failed to poll child")? {
+                Some(_status) => {
+                    debug!("QEMU exited after {:.3}s", start.elapsed().as_secs_f64());
+                    // Prevent Drop from trying to quit/kill again.
+                    // The child is already reaped, so wait() in Drop is a no-op.
+                    return Ok(());
+                }
+                None => {
+                    if start.elapsed() > timeout {
+                        let _ = self.child.kill();
+                        let _ = self.child.wait();
+                        bail!(
+                            "QEMU did not terminate within {}s after quit",
+                            timeout.as_secs()
+                        );
+                    }
+                    thread::sleep(Duration::from_millis(50));
+                }
+            }
+        }
+    }
+
     pub fn poll_status(&mut self, expected_state: RunState, timeout: Duration) -> Result<()> {
         let start = std::time::Instant::now();
         loop {

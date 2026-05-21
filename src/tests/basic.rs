@@ -7,6 +7,8 @@ use log::debug;
 use qapi::qmp;
 use regex::Regex;
 use std::fs;
+use std::thread::sleep;
+use std::time::Duration;
 use test_macro::test_fn;
 
 const GUEST_BIN: &[u8] = include_bytes!("../../payload/guest.bin");
@@ -225,6 +227,37 @@ pub(crate) fn test_mmio_regs() -> Result<()> {
     process
         .poll_line(expected_output)
         .context("MMIO register test failed")?;
+
+    Ok(())
+}
+
+// Test that sending QMP `quit` immediately after launch causes QEMU to
+// terminate within a reasonable timeout. This catches race conditions where
+// the quit command is lost or the process hangs during shutdown.
+#[test_fn(
+    machine = {Machine::Pc, Machine::Q35},
+    smp = {1, 2, 4},
+    // ms to wait before sending quit, to catch different timing windows
+    delay = {0, 50, 200},
+)]
+pub(crate) fn test_quit_terminates(machine: Machine, smp: u8, delay: u8) -> Result<()> {
+    let tmp_dir = tempfile::tempdir().context("failed to create temp dir")?;
+    let guest_bin_path = tmp_dir.path().join("guest.bin");
+    fs::write(&guest_bin_path, GUEST_BIN).context("failed to write guest binary")?;
+    let payload = QemuPayload::GuestBin(guest_bin_path);
+    let cfg = QemuConfig::new(&tmp_dir, &payload)
+        .with_machine(machine)
+        .with_smp(smp);
+    let process = QemuProcess::spawn(cfg).context("failed to spawn QEMU process")?;
+
+    if delay > 0 {
+        debug!("Waiting {delay} ms before sending quit...");
+        sleep(Duration::from_millis(delay.into()));
+    }
+
+    process
+        .quit_and_wait(Duration::from_secs(10))
+        .context("QEMU did not terminate after quit")?;
 
     Ok(())
 }
