@@ -19,6 +19,11 @@ use tempfile::TempDir;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 const DEFAULT_QEMU_BIN: &str = "qemu-system-x86_64";
+/// Bound on every QMP request/response so a hung QEMU cannot wedge a test forever.
+/// Generous enough for slow synchronous commands; long-running ops (migrate) are async.
+const QMP_IO_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long to wait for a QEMU child to exit during Drop before SIGKILLing it.
+const DROP_KILL_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(crate) enum ExpectedOutput {
     SubString(String),
@@ -419,6 +424,13 @@ impl QemuProcess {
 
         let qmp_sock = Socket::new(qmp_sock_path);
         let stream = qmp_sock.connect(DEFAULT_TIMEOUT)?.state.stream;
+        // Bound every blocking QMP I/O so a hung QEMU cannot wedge a test forever.
+        stream
+            .set_read_timeout(Some(QMP_IO_TIMEOUT))
+            .context("failed to set QMP read timeout")?;
+        stream
+            .set_write_timeout(Some(QMP_IO_TIMEOUT))
+            .context("failed to set QMP write timeout")?;
         let mut qmp = Qmp::new(qapi::Stream::new(
             BufReader::new(stream.try_clone().context("failed to clone stream")?),
             stream,
@@ -617,6 +629,30 @@ impl Drop for QemuProcess {
                 let _ = self.child.kill();
             }
         }
-        let _ = self.child.wait();
+        // Poll for exit, then SIGKILL if it doesn't terminate. Prevents a hung
+        // QEMU from blocking the test runner forever in `child.wait()`.
+        let start = Instant::now();
+        loop {
+            match self.child.try_wait() {
+                Ok(Some(_)) => return,
+                Ok(None) => {
+                    if start.elapsed() > DROP_KILL_TIMEOUT {
+                        debug!(
+                            "QEMU (PID {}) did not exit within {}s, killing",
+                            self.child.id(),
+                            DROP_KILL_TIMEOUT.as_secs()
+                        );
+                        let _ = self.child.kill();
+                        let _ = self.child.wait();
+                        return;
+                    }
+                    thread::sleep(Duration::from_millis(100));
+                }
+                Err(e) => {
+                    debug!("try_wait on QEMU child failed: {e}");
+                    return;
+                }
+            }
+        }
     }
 }
