@@ -42,7 +42,12 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y nasm qemu-system-x86 wget mtools
+          sudo apt-get install -y \
+              qemu-system-x86 \
+              mtools \
+              nasm \
+              wget \
+              xmlstarlet
 
       - name: Run functional tests
         uses: ./

@@ -67,6 +67,7 @@ runs:
       QEMU_BIN: ${{ inputs.qemu_bin }}
       TEST_FILTER: ${{ inputs.test_filter }}
       TEST_JOBS: ${{ inputs.test_jobs }}
+      TEST_JUNIT_PATH: ${{ github.action_path }}/junit-default.xml
       RUST_LOG: warn
     run: |
       if [ -z "$TEST_FILTER" ]; then
@@ -83,10 +84,60 @@ runs:
       QEMU_BIN: ${{ inputs.qemu_bin }}
       TEST_FILTER: ${{ inputs.test_filter }}
       TEST_JOBS: ${{ inputs.test_jobs }}
+      TEST_JUNIT_PATH: ${{ github.action_path }}/junit-migration.xml
       RUST_LOG: warn
     run: |
       sudo make setup-bridge NUM_TAPS=$((TEST_JOBS * 2))
       sudo -E env "PATH=$PATH" make run-release "TEST_FILTER=migration_os${TEST_FILTER:+,$TEST_FILTER}"
+
+  - name: Generate test summary
+    if: always()
+    shell: bash
+    working-directory: ${{ github.action_path }}
+    run: |
+      for f in junit-*.xml; do
+        [ -f "$f" ] || continue
+        suite_name=$(echo "$f" | sed 's/junit-//;s/\.xml//')
+        tests=$(xmlstarlet sel -t -v "/testsuites/testsuite/@tests" "$f")
+        failures=$(xmlstarlet sel -t -v "/testsuites/testsuite/@failures" "$f")
+        skipped=$(xmlstarlet sel -t -v "/testsuites/testsuite/@skipped" "$f")
+        time=$(xmlstarlet sel -t -v "/testsuites/testsuite/@time" "$f")
+        passed=$((tests - failures - skipped))
+
+        {
+          if [ "$failures" -gt 0 ]; then
+            echo "### ❌ ${suite_name} — ${failures} failed, ${passed} passed, ${skipped} skipped (${time}s)"
+          else
+            echo "### ✅ ${suite_name} — ${passed} passed, ${skipped} skipped (${time}s)"
+          fi
+
+          if [ "$failures" -gt 0 ]; then
+            echo ""
+            echo "| Test | Error |"
+            echo "|------|-------|"
+            xmlstarlet sel -t -m "//testcase[failure]" -v "@name" -o "|" -v "failure/@message" -n "$f" | while IFS='|' read -r tc_name msg; do
+              echo "| ${tc_name} | ${msg} |"
+            done
+          fi
+
+          echo ""
+          echo "<details>"
+          echo "<summary>All test results (${tests} tests)</summary>"
+          echo ""
+          echo "| Status | Test | Time |"
+          echo "|--------|------|------|"
+          xmlstarlet sel -t -m "//testcase" \
+            -i "failure" -o "❌" -b \
+            -i "skipped" -o "⚪" -b \
+            -i "not(failure) and not(skipped)" -o "✅" -b \
+            -o "|" -v "@name" -o "|" -v "@time" -n "$f" | sort -t'|' -k2 | while IFS='|' read -r status tc_name tc_time; do
+              echo "| ${status} | ${tc_name} | ${tc_time}s |"
+          done
+          echo ""
+          echo "</details>"
+          echo ""
+        } >> "$GITHUB_STEP_SUMMARY"
+      done
 
   - name: Cleanup
     if: always()
