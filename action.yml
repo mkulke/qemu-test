@@ -21,15 +21,6 @@ inputs:
     description: "Skip migration OS tests (true/false)"
     default: "false"
     required: false
-  test_output:
-    description: "Test output format (text|dot|junit)"
-    default: "text"
-    required: false
-
-outputs:
-  test_results_path:
-    description: "Path to directory containing JUnit XML reports (only set when test_output=junit)"
-    value: ${{ steps.results-path.outputs.path }}
 
 runs:
   using: 'composite'
@@ -68,12 +59,6 @@ runs:
     working-directory: ${{ github.action_path }}
     run: make build-release
 
-  - name: Create JUnit output directory
-    if: ${{ inputs.test_output == 'junit' }}
-    shell: bash
-    working-directory: ${{ github.action_path }}
-    run: mkdir -p junit
-
   - name: Run tests
     shell: bash
     working-directory: ${{ github.action_path }}
@@ -82,15 +67,10 @@ runs:
       QEMU_BIN: ${{ inputs.qemu_bin }}
       TEST_FILTER: ${{ inputs.test_filter }}
       TEST_JOBS: ${{ inputs.test_jobs }}
-      TEST_OUTPUT: ${{ inputs.test_output }}
-      TEST_JUNIT_RESULT_PATH: ${{ inputs.test_output == 'junit' && format('{0}/junit/results-default.xml', github.action_path) || '' }}
       RUST_LOG: warn
     run: |
       if [ -z "$TEST_FILTER" ]; then
         unset TEST_FILTER
-      fi
-      if [ -z "$TEST_JUNIT_RESULT_PATH" ]; then
-        unset TEST_JUNIT_RESULT_PATH
       fi
       sudo -E env "PATH=$PATH" make run-release
 
@@ -103,21 +83,10 @@ runs:
       QEMU_BIN: ${{ inputs.qemu_bin }}
       TEST_FILTER: ${{ inputs.test_filter }}
       TEST_JOBS: ${{ inputs.test_jobs }}
-      TEST_OUTPUT: ${{ inputs.test_output }}
-      TEST_JUNIT_RESULT_PATH: ${{ inputs.test_output == 'junit' && format('{0}/junit/results-migration.xml', github.action_path) || '' }}
       RUST_LOG: warn
     run: |
       sudo make setup-bridge NUM_TAPS=$((TEST_JOBS * 2))
-      if [ -z "$TEST_JUNIT_RESULT_PATH" ]; then
-        unset TEST_JUNIT_RESULT_PATH
-      fi
       sudo -E env "PATH=$PATH" make run-release "TEST_FILTER=migration_os${TEST_FILTER:+,$TEST_FILTER}"
-
-  - name: Set test results path
-    id: results-path
-    if: always() && inputs.test_output == 'junit'
-    shell: bash
-    run: echo "path=${{ github.action_path }}/junit" >> $GITHUB_OUTPUT
 
   - name: Cleanup
     if: always()

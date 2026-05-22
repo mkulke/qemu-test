@@ -110,19 +110,24 @@ pub fn test_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
     if all_combos.len() == 1 && all_combos[0].is_empty() {
         // Non-parameterized: single function, auto-registered
         let static_name = format_ident!("_{}", name_str.to_uppercase());
-        let label_fn = format_ident!("{}_label", name);
+        let props_fn = format_ident!("{}_props", name);
         let expanded = quote! {
             #(#other_attrs)*
             #vis fn #name() #ret {
                 (|| #block)()
             }
 
-            fn #label_fn() -> String {
-                #name_str.to_string()
+            fn #props_fn() -> Vec<(&'static str, String)> {
+                Vec::new()
             }
 
             #[linkme::distributed_slice(crate::TESTS)]
-            static #static_name: crate::TestEntry = (#label_fn, #name, #skip_token);
+            static #static_name: crate::TestEntry = crate::TestEntry {
+                name: #name_str,
+                props_fn: #props_fn,
+                test_fn: #name,
+                skip: #skip_token,
+            };
         };
         return expanded.into();
     }
@@ -132,11 +137,11 @@ pub fn test_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     for (i, combo) in all_combos.iter().enumerate() {
         let fn_name = format_ident!("{}_{}", name, i);
-        let label_fn = format_ident!("{}_{}_label", name, i);
+        let props_fn = format_ident!("{}_{}_props", name, i);
         let static_name = format_ident!("_{}_{}", name_str.to_uppercase(), i);
 
         let bindings = make_bindings(params, combo);
-        let label_code = make_label_code(&name_str, combo);
+        let props_code = make_props_code(combo);
 
         fn_defs.push(quote! {
             #(#other_attrs)*
@@ -147,14 +152,18 @@ pub fn test_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
 
             #[allow(unused_variables)]
-            fn #label_fn() -> String {
+            fn #props_fn() -> Vec<(&'static str, String)> {
                 #(#bindings)*
-                #label_code
-                __test_label
+                #props_code
             }
 
             #[linkme::distributed_slice(crate::TESTS)]
-            static #static_name: crate::TestEntry = (#label_fn, #fn_name, #skip_token);
+            static #static_name: crate::TestEntry = crate::TestEntry {
+                name: #name_str,
+                props_fn: #props_fn,
+                test_fn: #fn_name,
+                skip: #skip_token,
+            };
         });
     }
 
@@ -273,39 +282,28 @@ fn make_bindings(
         .collect()
 }
 
-fn make_label_code(
-    name_str: &str,
-    combo: &[(Ident, Option<Expr>, bool)],
-) -> proc_macro2::TokenStream {
-    if combo.is_empty() {
-        quote! { let __test_label = #name_str.to_string(); }
+fn make_props_code(combo: &[(Ident, Option<Expr>, bool)]) -> proc_macro2::TokenStream {
+    // Only include params that are not optional-None
+    let visible: Vec<&(Ident, Option<Expr>, bool)> = combo
+        .iter()
+        .filter(|(_, value, optional)| !(*optional && value.is_none()))
+        .collect();
+
+    if visible.is_empty() {
+        quote! { Vec::new() }
     } else {
-        // Only include params in the label that are not optional-None
-        let visible: Vec<&(Ident, Option<Expr>, bool)> = combo
+        let entries: Vec<proc_macro2::TokenStream> = visible
             .iter()
-            .filter(|(_, value, optional)| !(*optional && value.is_none()))
+            .map(|(name, _, optional)| {
+                let key = name.to_string();
+                if *optional {
+                    quote! { (#key, format!("{}", #name.unwrap())) }
+                } else {
+                    quote! { (#key, format!("{}", #name)) }
+                }
+            })
             .collect();
 
-        if visible.is_empty() {
-            quote! { let __test_label = #name_str.to_string(); }
-        } else {
-            let keys: Vec<String> = visible.iter().map(|(name, _, _)| name.to_string()).collect();
-            let fmt_parts: Vec<_> = keys.iter().map(|k| format!("{k}={{}}")).collect();
-            let fmt_str = format!("{}({})", name_str, fmt_parts.join(", "));
-
-            // For optional Some values, we need to format the inner value
-            let format_args: Vec<proc_macro2::TokenStream> = visible
-                .iter()
-                .map(|(name, _, optional)| {
-                    if *optional {
-                        quote! { #name.unwrap() }
-                    } else {
-                        quote! { #name }
-                    }
-                })
-                .collect();
-
-            quote! { let __test_label = format!(#fmt_str, #(#format_args),*); }
-        }
+        quote! { vec![#(#entries),*] }
     }
 }

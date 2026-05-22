@@ -1,11 +1,8 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 use config::CONFIG;
+use junit::{TestOutcome, TestResult, write_junit};
 use linkme::distributed_slice;
 use log::warn;
-use output::{
-    OutputFormat, TestOutcome, TestResult, has_failures, print_summary, print_test_result,
-    print_test_start,
-};
 use rand::seq::SliceRandom;
 use rayon::prelude::*;
 use std::cell::RefCell;
@@ -14,13 +11,34 @@ use util::TestFilter;
 
 mod cloud_init;
 mod config;
-mod output;
+mod junit;
 mod process;
 mod tests;
 mod util;
 
-// label, test function, skip reason (None = run by default)
-pub type TestEntry = (fn() -> String, fn() -> Result<()>, Option<&'static str>);
+// name, properties, test function, skip reason (None = run by default)
+pub struct TestEntry {
+    pub name: &'static str,
+    pub props_fn: fn() -> Vec<(&'static str, String)>,
+    pub test_fn: fn() -> Result<()>,
+    pub skip: Option<&'static str>,
+}
+
+impl TestEntry {
+    pub fn label(&self) -> String {
+        let props = (self.props_fn)();
+        if props.is_empty() {
+            self.name.to_string()
+        } else {
+            let params: Vec<String> = props.iter().map(|(k, v)| format!("{k}={v}")).collect();
+            format!("{}({})", self.name, params.join(", "))
+        }
+    }
+
+    pub fn properties(&self) -> Vec<(&'static str, String)> {
+        (self.props_fn)()
+    }
+}
 
 #[distributed_slice]
 pub static TESTS: [TestEntry];
@@ -36,34 +54,44 @@ extern "C" fn sigint_handler(_: libc::c_int) {
     SHUTDOWN.store(true, Ordering::Relaxed);
 }
 
-fn run_test(entry: &TestEntry, format: OutputFormat) -> TestResult {
-    let label = entry.0();
+fn run_test(entry: &TestEntry) -> TestResult {
+    let label = entry.label();
+    let properties = entry.properties();
     CURRENT_TEST_LABEL.with(|l| *l.borrow_mut() = label.clone());
 
     if SHUTDOWN.load(Ordering::Relaxed) {
-        let result = TestResult {
+        println!("FAIL: {label}: interrupted (0.00s)");
+        return TestResult {
             label,
+            properties,
             outcome: TestOutcome::Fail("interrupted".to_string()),
             duration: std::time::Duration::ZERO,
         };
-        print_test_result(format, &result);
-        return result;
     }
 
-    print_test_start(format, &label);
+    println!("TEST: {label}");
     let start = std::time::Instant::now();
-    let outcome = match (entry.1)() {
-        Ok(()) => TestOutcome::Pass,
-        Err(e) => TestOutcome::Fail(format!("{e}")),
-    };
+    let result = (entry.test_fn)();
     let duration = start.elapsed();
-    let result = TestResult {
+
+    let outcome = match result {
+        Ok(()) => {
+            println!("PASS: {label} ({:.2}s)", duration.as_secs_f64());
+            TestOutcome::Pass
+        }
+        Err(e) => {
+            let msg = format!("{e}");
+            println!("FAIL: {label}: {msg} ({:.2}s)", duration.as_secs_f64());
+            TestOutcome::Fail(msg)
+        }
+    };
+
+    TestResult {
         label,
+        properties,
         outcome,
         duration,
-    };
-    print_test_result(format, &result);
-    result
+    }
 }
 
 fn main() -> Result<()> {
@@ -80,38 +108,42 @@ fn main() -> Result<()> {
     let test_jobs = CONFIG.test_jobs()?;
     let test_repeat = CONFIG.test_repeat()?;
     let filter: Option<TestFilter> = CONFIG.test_filter()?;
-    let format = CONFIG.test_output()?;
+    let junit_path = CONFIG.test_junit_path();
 
     let mut skip_results: Vec<TestResult> = Vec::new();
 
     let tests: Vec<&TestEntry> = TESTS
         .iter()
         .filter(|entry| {
-            let label = entry.0();
+            let label = entry.label();
             let Some(filter) = &filter else {
-                if let Some(reason) = entry.2 {
-                    let result = TestResult {
-                        label: label.clone(),
-                        outcome: TestOutcome::Skip(reason.to_string()),
-                        duration: std::time::Duration::ZERO,
-                    };
-                    print_test_result(format, &result);
-                    skip_results.push(result);
+                if let Some(reason) = entry.skip {
+                    println!("SKIP: {label} ({reason})");
+                    if junit_path.is_some() {
+                        skip_results.push(TestResult {
+                            label: label.clone(),
+                            properties: entry.properties(),
+                            outcome: TestOutcome::Skip(reason.to_string()),
+                            duration: std::time::Duration::ZERO,
+                        });
+                    }
                     return false;
                 }
                 return true;
             };
-            let matches = filter.matches(&label, entry.2);
+            let matches = filter.matches(&label, entry.skip);
             let skipped_by_annotation =
-                entry.2.is_some() && filter.matches(&label, None) && !matches;
-            if skipped_by_annotation && let Some(reason) = entry.2 {
-                let result = TestResult {
-                    label: label.clone(),
-                    outcome: TestOutcome::Skip(reason.to_string()),
-                    duration: std::time::Duration::ZERO,
-                };
-                print_test_result(format, &result);
-                skip_results.push(result);
+                entry.skip.is_some() && filter.matches(&label, None) && !matches;
+            if skipped_by_annotation && let Some(reason) = entry.skip {
+                println!("SKIP: {label} ({reason})");
+                if junit_path.is_some() {
+                    skip_results.push(TestResult {
+                        label: label.clone(),
+                        properties: entry.properties(),
+                        outcome: TestOutcome::Skip(reason.to_string()),
+                        duration: std::time::Duration::ZERO,
+                    });
+                }
             }
             matches
         })
@@ -132,22 +164,42 @@ fn main() -> Result<()> {
         .expect("failed to build thread pool");
 
     let start = std::time::Instant::now();
-    let mut results: Vec<TestResult> = pool.install(|| {
-        tests
-            .par_iter()
-            .map(|entry| run_test(entry, format))
-            .collect()
-    });
+    let results: Vec<TestResult> =
+        pool.install(|| tests.par_iter().map(|entry| run_test(entry)).collect());
     let elapsed = start.elapsed();
 
-    results.extend(skip_results);
-    let failed = has_failures(&results);
-    let junit_path = CONFIG.test_junit_result_path();
-    print_summary(format, &results, elapsed, junit_path);
+    let failures: Vec<_> = results
+        .iter()
+        .filter_map(|r| match &r.outcome {
+            TestOutcome::Fail(e) => Some((r.label.clone(), e.clone())),
+            _ => None,
+        })
+        .collect();
+    let num_run = results.len();
 
-    if failed {
-        std::process::exit(1);
+    if let Some(path) = junit_path {
+        let mut all_results = skip_results;
+        all_results.extend(results);
+        write_junit(path, &all_results, elapsed);
     }
 
+    if !failures.is_empty() {
+        eprintln!();
+        for (label, e) in &failures {
+            eprintln!("FAIL: {label}: {e}");
+        }
+        bail!(
+            "\n{} of {} tests failed ({:.2}s)",
+            failures.len(),
+            num_run,
+            elapsed.as_secs_f64()
+        );
+    }
+
+    println!(
+        "\nPASS: All {} tests passed ({:.2}s)",
+        tests.len(),
+        elapsed.as_secs_f64()
+    );
     Ok(())
 }

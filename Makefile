@@ -47,7 +47,7 @@ RUNTIME_PAYLOADS = $(VMLINUZ) \
 		   $(OVMF_CODE) \
 		   $(STRESS_NG_BIN)
 
-.PHONY: echo-runtime-payloads build build-payloads build-release run run-release clean lint check-build-tools check-tools setup-bridge teardown-bridge
+.PHONY: echo-runtime-payloads build build-payloads build-release run run-release clean fmt lint check-build-tools check-tools setup-bridge teardown-bridge
 
 echo-cachable-payloads:
 	@$(foreach p,$(RUNTIME_PAYLOADS),realpath $(p);)
@@ -135,6 +135,9 @@ $(INITRD): $(INIT_BIN)
 clean:
 	rm -f $(EMBEDDED_PAYLOADS) $(RUNTIME_PAYLOADS)
 	cargo clean
+
+fmt:
+	cargo fmt
 
 lint:
 	cargo fmt --check && \

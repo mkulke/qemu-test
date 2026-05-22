@@ -36,6 +36,7 @@ The test setup can be configured via environment variables:
 - `TEST_FILTER` - filter to select tests to run (default: all tests)
 - `KEEP_LOGS` - directory to keep logs of all tests (default: none)
 - `TEST_REPEAT` - number of times to repeat each test (default: 1)
+- `TEST_JUNIT_PATH` - path to output JUnit XML report (default: none)
 
 ## Filter
 

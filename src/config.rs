@@ -1,4 +1,3 @@
-use crate::output::OutputFormat;
 use crate::process::Accelerator;
 use crate::util::TestFilter;
 use anyhow::{Context, Result};
@@ -12,8 +11,7 @@ pub(crate) struct Config {
     test_filter: Option<String>,
     test_repeat: Option<String>,
     keep_logs: Option<String>,
-    test_output: Option<String>,
-    test_junit_result_path: Option<String>,
+    test_junit_path: Option<String>,
 }
 
 pub(crate) static CONFIG: LazyLock<Config> = LazyLock::new(|| Config {
@@ -23,8 +21,7 @@ pub(crate) static CONFIG: LazyLock<Config> = LazyLock::new(|| Config {
     test_filter: env::var("TEST_FILTER").ok(),
     test_repeat: env::var("TEST_REPEAT").ok(),
     keep_logs: env::var("KEEP_LOGS").ok(),
-    test_output: env::var("TEST_OUTPUT").ok(),
-    test_junit_result_path: env::var("TEST_JUNIT_RESULT_PATH").ok(),
+    test_junit_path: env::var("TEST_JUNIT_PATH").ok(),
 });
 
 const DEFAULT_ACCELERATOR: Accelerator = Accelerator::Kvm;
@@ -76,14 +73,7 @@ impl Config {
         Ok(repeat)
     }
 
-    pub fn test_output(&self) -> Result<OutputFormat> {
-        let Some(value) = self.test_output.as_deref() else {
-            return Ok(OutputFormat::default());
-        };
-        value.try_into()
-    }
-
-    pub fn test_junit_result_path(&self) -> &str {
-        self.test_junit_result_path.as_deref().unwrap_or("test-results.xml")
+    pub fn test_junit_path(&self) -> Option<&str> {
+        self.test_junit_path.as_deref()
     }
 }
