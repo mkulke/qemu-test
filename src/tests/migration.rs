@@ -27,6 +27,7 @@ const MIGRATION_STRESS_TIMEOUT: Duration = Duration::from_secs(60);
 const SSH_TIMEOUT: Duration = Duration::from_secs(30);
 const ECHO_PORT: u16 = 7777;
 const STRESS_NG_BIN: &str = "payload/stress-ng";
+const STRESS_NG_PGREP: &str = "pgrep -a -x stress-ng";
 const ECHO_SERVER_CMD: &str = concat!(
     "nohup python3 -c '",
     "import socket; ",
@@ -77,6 +78,14 @@ fn connect_echo(host: &str, port: u16, timeout: Duration) -> Result<TcpStream> {
             }
         }
     }
+}
+
+fn ensure_stress_ng_running(key_path: &std::path::Path, host: &str) -> Result<()> {
+    let processes = ssh_command(key_path, host, 22, GUEST_USER, STRESS_NG_PGREP, SSH_TIMEOUT)
+        .context("stress-ng is not running")?;
+    debug!("stress-ng processes: {processes}");
+
+    Ok(())
 }
 
 fn do_migration(
@@ -273,6 +282,8 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8, stress_ng: bool)
             SSH_TIMEOUT,
         )
         .context("failed to start stress-ng")?;
+        ensure_stress_ng_running(&ci.ssh_key_path, taps.guest_host())
+            .context("stress-ng did not stay running on source")?;
         debug!("stress-ng running in guest ({vm_bytes_mb}M vm-bytes)");
     }
 
@@ -316,6 +327,12 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8, stress_ng: bool)
         "unexpected echo reply after migration: {reply}"
     );
     debug!("echo verified after migration — TCP connection survived");
+
+    if stress_ng {
+        ensure_stress_ng_running(&ci.ssh_key_path, taps.guest_host())
+            .context("stress-ng did not survive migration")?;
+        debug!("stress-ng verified after migration");
+    }
 
     Ok(())
 }
