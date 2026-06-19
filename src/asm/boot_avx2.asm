@@ -13,6 +13,8 @@
 ;
 ; Assemble with: nasm -f bin -o guest_avx2.bin boot_avx2.asm
 
+%include "serial64.inc"
+
 ; ============================================================
 ; 16-bit real mode entry
 ; ============================================================
@@ -261,26 +263,7 @@ verify_loop:
     jnz .spin
     jmp verify_loop
 
-; ============================================================
-; serial_print: print NUL-terminated string at RSI to COM1
-; ============================================================
-serial_print:
-.next:
-    lodsb
-    test al, al
-    jz .done
-.wait_tx:
-    mov dx, 0x3fd
-    push rax
-    in al, dx
-    test al, 0x20
-    pop rax
-    jz .wait_tx
-    mov dx, 0x3f8
-    out dx, al
-    jmp .next
-.done:
-    ret
+SERIAL64
 
 ; ============================================================
 ; Data

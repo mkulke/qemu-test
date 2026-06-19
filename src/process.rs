@@ -529,6 +529,14 @@ impl QemuProcess {
     }
 
     pub fn poll_line_timeout(&mut self, expected: ExpectedOutput, timeout: Duration) -> Result<()> {
+        self.poll_line_match_timeout(expected, timeout).map(|_| ())
+    }
+
+    pub fn poll_line_match_timeout(
+        &mut self,
+        expected: ExpectedOutput,
+        timeout: Duration,
+    ) -> Result<String> {
         let start = Instant::now();
         let mut partial = Vec::new();
 
@@ -544,7 +552,7 @@ impl QemuProcess {
                 ChunkResult::Line(line) => {
                     debug!("[serial] {}", line.trim_end());
                     if expected.matches(&line) {
-                        return Ok(());
+                        return Ok(line);
                     }
                 }
                 ChunkResult::Progress => {

@@ -6,6 +6,7 @@ use crate::util::{NetConfig, allocate_taps, generate_mac};
 use anyhow::{Context, Result, bail, ensure};
 use log::debug;
 use qapi::qmp::{self, RunState};
+use regex::Regex;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::thread::sleep;
@@ -14,6 +15,8 @@ use test_macro::test_fn;
 
 const GUEST_BIN: &[u8] = include_bytes!("../../payload/guest.bin");
 const GUEST_AVX2_BIN: &[u8] = include_bytes!("../../payload/guest_avx2.bin");
+const GUEST_SCALAR_BIN: &[u8] = include_bytes!("../../payload/guest_scalar.bin");
+const GUEST_FP_SSE_BIN: &[u8] = include_bytes!("../../payload/guest_fp_sse.bin");
 const EXPECTED_OUTPUT: &str = "HELLO FROM GUEST";
 const KERNEL: &str = "payload/vmlinuz-virt";
 const INITRD: &str = "payload/initrd.img";
@@ -349,6 +352,85 @@ pub(crate) fn test_live_migration_avx2(smp: u8) -> Result<()> {
     dst.poll_line(ExpectedOutput::SubString("AVX2:OK".into()))
         .context("destination: YMM registers not intact after migration")?;
     debug!("AVX2 YMM registers verified after migration");
+
+    Ok(())
+}
+
+#[test_fn(smp = {1, 2})]
+pub(crate) fn test_live_migration_scalar_state(smp: u8) -> Result<()> {
+    let src_dir = tempfile::tempdir().context("failed to create src temp dir")?;
+    let dst_dir = tempfile::tempdir().context("failed to create dst temp dir")?;
+    let mig_dir = tempfile::tempdir().context("failed to create migration temp dir")?;
+    let mig_sock = mig_dir.path().join("migration.sock");
+
+    let guest_bin_path = src_dir.path().join("guest_scalar.bin");
+    std::fs::write(&guest_bin_path, GUEST_SCALAR_BIN)
+        .context("failed to write scalar guest binary")?;
+    let payload = QemuPayload::GuestBin(guest_bin_path);
+
+    let cfg = QemuConfig::new(&src_dir, &payload)
+        .with_cpu_model(Cpu::Host)
+        .with_machine(Machine::Pc)
+        .with_smp(smp);
+
+    let mut src = QemuProcess::spawn(cfg.clone()).context("failed to spawn source VM")?;
+
+    src.poll_line(ExpectedOutput::SubString("SCALAR:READY".into()))
+        .context("source: scalar guest did not become ready")?;
+    debug!("scalar guest ready on source");
+
+    let cfg = cfg.with_incoming(&dst_dir);
+    let mut dst = QemuProcess::spawn(cfg).context("failed to spawn dest VM")?;
+
+    do_migration(&mut src, &mut dst, &mig_sock, MIGRATION_TIMEOUT)?;
+
+    dst.poll_line(ExpectedOutput::SubString("SCALAR:OK".into()))
+        .context("destination: scalar CPU state not intact after migration")?;
+    debug!("scalar CPU state verified after migration");
+
+    Ok(())
+}
+
+#[test_fn(smp = {1, 2})]
+pub(crate) fn test_live_migration_fp_sse_state(smp: u8) -> Result<()> {
+    let src_dir = tempfile::tempdir().context("failed to create src temp dir")?;
+    let dst_dir = tempfile::tempdir().context("failed to create dst temp dir")?;
+    let mig_dir = tempfile::tempdir().context("failed to create migration temp dir")?;
+    let mig_sock = mig_dir.path().join("migration.sock");
+
+    let guest_bin_path = src_dir.path().join("guest_fp_sse.bin");
+    std::fs::write(&guest_bin_path, GUEST_FP_SSE_BIN)
+        .context("failed to write FP/SSE guest binary")?;
+    let payload = QemuPayload::GuestBin(guest_bin_path);
+
+    let cfg = QemuConfig::new(&src_dir, &payload)
+        .with_cpu_model(Cpu::Host)
+        .with_machine(Machine::Pc)
+        .with_smp(smp);
+
+    let mut src = QemuProcess::spawn(cfg.clone()).context("failed to spawn source VM")?;
+
+    src.poll_line(ExpectedOutput::SubString("FPSSE:READY".into()))
+        .context("source: FP/SSE guest did not become ready")?;
+    debug!("FP/SSE guest ready on source");
+
+    let cfg = cfg.with_incoming(&dst_dir);
+    let mut dst = QemuProcess::spawn(cfg).context("failed to spawn dest VM")?;
+
+    do_migration(&mut src, &mut dst, &mig_sock, MIGRATION_TIMEOUT)?;
+
+    let result = dst
+        .poll_line_match_timeout(
+            ExpectedOutput::Pattern(Regex::new(r"FPSSE:(OK|FAIL_[A-Z0-9_]+)")?),
+            MIGRATION_TIMEOUT,
+        )
+        .context("destination: FP/SSE state not intact after migration")?;
+    ensure!(
+        result.contains("FPSSE:OK"),
+        "destination: FP/SSE diagnostic failed: {}",
+        result.trim_end()
+    );
+    debug!("FP/SSE state verified after migration");
 
     Ok(())
 }

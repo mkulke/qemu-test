@@ -8,6 +8,10 @@ GUEST_PIO_STR_ASM = src/asm/boot_pio_str.asm
 GUEST_PIO_STR_BIN = payload/guest_pio_str.bin
 GUEST_AVX2_ASM = src/asm/boot_avx2.asm
 GUEST_AVX2_BIN = payload/guest_avx2.bin
+GUEST_SCALAR_ASM = src/asm/boot_scalar.asm
+GUEST_SCALAR_BIN = payload/guest_scalar.bin
+GUEST_FP_SSE_ASM = src/asm/boot_fp_sse.asm
+GUEST_FP_SSE_BIN = payload/guest_fp_sse.bin
 GUEST_MMIO_ASM = src/asm/boot_mmio.asm
 GUEST_MMIO_BIN = payload/guest_mmio.bin
 GUEST_PIO_VMPORT_ASM = src/asm/boot_pio_vmport.asm
@@ -39,6 +43,8 @@ EMBEDDED_PAYLOADS = $(GUEST_BIN) \
 		   $(GUEST_PIO_STR_BIN) \
 		   $(GUEST_PIO_VMPORT_BIN) \
 		   $(GUEST_AVX2_BIN) \
+		   $(GUEST_SCALAR_BIN) \
+		   $(GUEST_FP_SSE_BIN) \
 		   $(GUEST_MMIO_BIN) \
 		   $(GUEST_MMIO_REGS_BIN)
 RUNTIME_PAYLOADS = $(VMLINUZ) \
@@ -95,8 +101,14 @@ $(GUEST_BIN): $(GUEST_ASM) $(ASM_INCLUDES)
 $(GUEST_PIO_STR_BIN): $(GUEST_PIO_STR_ASM) $(ASM_INCLUDES)
 	nasm -I src/asm/ -f bin -o $@ $<
 
-$(GUEST_AVX2_BIN): $(GUEST_AVX2_ASM)
-	nasm -f bin -o $@ $<
+$(GUEST_AVX2_BIN): $(GUEST_AVX2_ASM) $(ASM_INCLUDES)
+	nasm -I src/asm/ -f bin -o $@ $<
+
+$(GUEST_SCALAR_BIN): $(GUEST_SCALAR_ASM) $(ASM_INCLUDES)
+	nasm -I src/asm/ -f bin -o $@ $<
+
+$(GUEST_FP_SSE_BIN): $(GUEST_FP_SSE_ASM) $(ASM_INCLUDES)
+	nasm -I src/asm/ -f bin -o $@ $<
 
 $(GUEST_MMIO_BIN): $(GUEST_MMIO_ASM) $(ASM_INCLUDES)
 	nasm -I src/asm/ -f bin -o $@ $<
