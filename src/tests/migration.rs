@@ -271,7 +271,7 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8, stress_ng: bool)
 
         let vm_bytes_mb = base_cfg.ram_mb() / 4;
         let stress_ng_run_cmd = format!(
-            "nohup /tmp/stress-ng --cpu 0 --vm 1 --vm-bytes {vm_bytes_mb}M --timeout 0 </dev/null >/dev/null 2>&1 &"
+            "nohup /tmp/stress-ng --cpu 0 --vm 1 --vm-bytes {vm_bytes_mb}M --hdd 1 --timeout 0 </dev/null >/dev/null 2>&1 &"
         );
         ssh_command(
             &ci.ssh_key_path,
