@@ -87,6 +87,7 @@ runs:
     env:
       ACCEL: ${{ inputs.accel }}
       QEMU_BIN: ${{ inputs.qemu_bin }}
+      # Include all OS migration tests, then exclude the non-stress-ng variants.
       TEST_FILTER: migration_os,-stress_ng=false
       TEST_JOBS: "1"
       TEST_JUNIT_PATH: ${{ github.action_path }}/junit-migration.xml
