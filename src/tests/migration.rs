@@ -131,11 +131,13 @@ fn verify_stress_ng_pid_exists(stream: &mut TcpStream, phase: &str, pid: &str) -
 fn wait_for_stress_ng_pid(stream: &mut TcpStream, timeout: Duration) -> Result<String> {
     let start = Instant::now();
     loop {
-        if let Ok(pid) = stress_ng_pid(stream) {
-            return Ok(pid);
-        }
-        if start.elapsed() >= timeout {
-            return stress_ng_pid(stream);
+        match stress_ng_pid(stream) {
+            Ok(pid) => return Ok(pid),
+            Err(err) => {
+                if start.elapsed() >= timeout {
+                    return Err(err);
+                }
+            }
         }
         sleep(STRESS_NG_WAIT_INTERVAL);
     }
@@ -149,11 +151,13 @@ fn wait_for_stress_ng_pid_exists(
 ) -> Result<()> {
     let start = Instant::now();
     loop {
-        if verify_stress_ng_pid_exists(stream, phase, pid).is_ok() {
-            return Ok(());
-        }
-        if start.elapsed() >= timeout {
-            return verify_stress_ng_pid_exists(stream, phase, pid);
+        match verify_stress_ng_pid_exists(stream, phase, pid) {
+            Ok(()) => return Ok(()),
+            Err(err) => {
+                if start.elapsed() >= timeout {
+                    return Err(err);
+                }
+            }
         }
         sleep(STRESS_NG_WAIT_INTERVAL);
     }
