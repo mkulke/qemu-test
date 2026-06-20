@@ -69,7 +69,7 @@ runs:
     env:
       ACCEL: ${{ inputs.accel }}
       QEMU_BIN: ${{ inputs.qemu_bin }}
-      # The stress-ng migration step below is the only runtime test run here.
+      # No test label contains "notest"; this intentionally skips the default runtime test run.
       TEST_FILTER: notest
       TEST_JOBS: ${{ inputs.test_jobs }}
       TEST_JUNIT_PATH: ${{ github.action_path }}/junit-default.xml
@@ -90,6 +90,7 @@ runs:
       QEMU_BIN: ${{ inputs.qemu_bin }}
       # The stress_ng=true parameter label is emitted by the OS migration test.
       TEST_FILTER: stress_ng=true
+      # Run stress-ng migration cases sequentially to avoid shared host resource contention.
       TEST_JOBS: "1"
       TEST_JUNIT_PATH: ${{ github.action_path }}/junit-migration.xml
       FILTER_WARNINGS: ${{ inputs.filter-warnings }}
