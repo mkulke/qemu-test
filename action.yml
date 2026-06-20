@@ -87,9 +87,8 @@ runs:
     env:
       ACCEL: ${{ inputs.accel }}
       QEMU_BIN: ${{ inputs.qemu_bin }}
-      # Include all OS migration tests, then exclude tests where stress_ng=false;
-      # this effectively selects only stress-ng migration tests.
-      TEST_FILTER: migration_os,-stress_ng=false
+      # The stress_ng=true parameter label is emitted by the OS migration test.
+      TEST_FILTER: stress_ng=true
       TEST_JOBS: "1"
       TEST_JUNIT_PATH: ${{ github.action_path }}/junit-migration.xml
       FILTER_WARNINGS: ${{ inputs.filter-warnings }}
