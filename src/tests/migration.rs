@@ -258,6 +258,8 @@ pub(crate) fn test_live_migration_kernel(cpu: Cpu, smp: u8) -> Result<()> {
     Ok(())
 }
 
+// The stress_ng parameter is emitted in test labels as stress_ng=true/false, allowing
+// action.yml to select only the stress-ng OS migration cases.
 // #[test_fn(machine = Machine::Q35, smp = 1)]
 #[test_fn(
     machine = {Machine::Pc, Machine::Q35},

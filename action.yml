@@ -63,7 +63,7 @@ runs:
     working-directory: ${{ github.action_path }}
     run: make build-release
 
-  - name: Run tests
+  - name: Run default tests when OS migration tests are skipped
     if: ${{ inputs.skip_migration_os_tests == 'true' }}
     shell: bash
     working-directory: ${{ github.action_path }}
