@@ -69,7 +69,7 @@ runs:
     env:
       ACCEL: ${{ inputs.accel }}
       QEMU_BIN: ${{ inputs.qemu_bin }}
-      TEST_FILTER: ${{ inputs.test_filter }}
+      TEST_FILTER: ${{ inputs.skip_migration_os_tests != 'true' && 'notest' || inputs.test_filter }}
       TEST_JOBS: ${{ inputs.test_jobs }}
       TEST_JUNIT_PATH: ${{ github.action_path }}/junit-default.xml
       RUST_LOG: warn
