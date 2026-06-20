@@ -69,6 +69,7 @@ runs:
     env:
       ACCEL: ${{ inputs.accel }}
       QEMU_BIN: ${{ inputs.qemu_bin }}
+      # When running stress-ng migration separately, use an unmatched filter to skip default tests.
       TEST_FILTER: ${{ inputs.skip_migration_os_tests != 'true' && 'notest' || inputs.test_filter }}
       TEST_JOBS: ${{ inputs.test_jobs }}
       TEST_JUNIT_PATH: ${{ github.action_path }}/junit-default.xml
