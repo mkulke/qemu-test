@@ -64,13 +64,13 @@ runs:
     run: make build-release
 
   - name: Run tests
+    if: ${{ inputs.skip_migration_os_tests == 'true' }}
     shell: bash
     working-directory: ${{ github.action_path }}
     env:
       ACCEL: ${{ inputs.accel }}
       QEMU_BIN: ${{ inputs.qemu_bin }}
-      # No test label contains "notest"; this intentionally skips the default runtime test run.
-      TEST_FILTER: notest
+      TEST_FILTER: ${{ inputs.test_filter }}
       TEST_JOBS: ${{ inputs.test_jobs }}
       TEST_JUNIT_PATH: ${{ github.action_path }}/junit-default.xml
       RUST_LOG: warn
@@ -88,7 +88,7 @@ runs:
     env:
       ACCEL: ${{ inputs.accel }}
       QEMU_BIN: ${{ inputs.qemu_bin }}
-      # The stress_ng=true parameter label is emitted by the OS migration test.
+      # test_live_migration_os in src/tests/migration.rs emits this parameter label.
       TEST_FILTER: stress_ng=true
       # Run stress-ng migration cases sequentially to avoid shared host resource contention.
       TEST_JOBS: "1"
