@@ -27,18 +27,12 @@ const MIGRATION_STRESS_TIMEOUT: Duration = Duration::from_secs(60);
 const SSH_TIMEOUT: Duration = Duration::from_secs(30);
 const ECHO_PORT: u16 = 7777;
 const STRESS_NG_BIN: &str = "payload/stress-ng";
-const STRESS_NG_PGREP: &str = "pgrep -a -x stress-ng";
-const ECHO_SERVER_CMD: &str = concat!(
-    "nohup python3 -c '",
-    "import socket; ",
-    "s=socket.socket(); ",
-    "s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); ",
-    "s.bind((\"0.0.0.0\",7777)); ",
-    "s.listen(1); ",
-    "c,_=s.accept(); ",
-    "[c.sendall(d) for d in iter(lambda:c.recv(4096),b\"\")]",
-    "' </dev/null >/dev/null 2>&1 &",
-);
+const GUEST_AGENT_SRC: &str = "src/python/guest_diag_agent.py";
+const GUEST_AGENT_DST: &str = "/tmp/qemu-test-guest-agent.py";
+const DIAG_UPTIME: &str = "__diag__:uptime";
+const DIAG_CLOCKSOURCE: &str = "__diag__:clocksource";
+const DIAG_STRESS_NG: &str = "__diag__:stress-ng";
+const DIAG_STRESS_NG_PID: &str = "__diag__:stress-ng-pid:";
 
 /// Send a line over a TcpStream and read the echoed response.
 fn echo_roundtrip(stream: &mut TcpStream, msg: &str, timeout: Duration) -> Result<String> {
@@ -80,10 +74,54 @@ fn connect_echo(host: &str, port: u16, timeout: Duration) -> Result<TcpStream> {
     }
 }
 
-fn ensure_stress_ng_running(key_path: &std::path::Path, host: &str) -> Result<()> {
-    let processes = ssh_command(key_path, host, 22, GUEST_USER, STRESS_NG_PGREP, SSH_TIMEOUT)
-        .context("stress-ng is not running")?;
-    debug!("stress-ng processes: {processes}");
+fn query_guest_diagnostic(stream: &mut TcpStream, cmd: &str) -> Result<String> {
+    echo_roundtrip(stream, cmd, Duration::from_secs(5))
+        .with_context(|| format!("guest_diag {cmd} failed"))
+}
+
+fn uptime_seconds(output: &str) -> &str {
+    output.split_whitespace().next().unwrap_or(output)
+}
+
+fn process_pid(output: &str) -> &str {
+    output.split_whitespace().next().unwrap_or(output)
+}
+
+fn trim_encoded_newline(output: &str) -> &str {
+    output.trim_end_matches("\\n")
+}
+
+fn log_guest_diagnostics(stream: &mut TcpStream, phase: &str) -> Result<()> {
+    let uptime = query_guest_diagnostic(stream, DIAG_UPTIME)?;
+    debug!("guest_diag {phase}: uptime={}", uptime_seconds(&uptime));
+
+    let clocksource = query_guest_diagnostic(stream, DIAG_CLOCKSOURCE)?;
+    debug!(
+        "guest_diag {phase}: clocksource={}",
+        trim_encoded_newline(&clocksource)
+    );
+
+    Ok(())
+}
+
+fn stress_ng_pid(stream: &mut TcpStream) -> Result<String> {
+    let output = query_guest_diagnostic(stream, DIAG_STRESS_NG)?;
+    let pid = process_pid(&output);
+    ensure!(
+        !pid.is_empty(),
+        "stress-ng did not appear in guest process list"
+    );
+
+    Ok(pid.to_string())
+}
+
+fn verify_stress_ng_pid_exists(stream: &mut TcpStream, phase: &str, pid: &str) -> Result<()> {
+    let output = query_guest_diagnostic(stream, &format!("{DIAG_STRESS_NG_PID}{pid}"))?;
+    ensure!(
+        output == "1",
+        "stress-ng pid {pid} did not survive migration"
+    );
+    debug!("guest_diag {phase}: stress-ng-pid={pid}");
 
     Ok(())
 }
@@ -243,20 +281,45 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8, stress_ng: bool)
     .context("SSH not reachable on source")?;
     debug!("source SSH is reachable");
 
+    scp_to_guest(
+        &ci.ssh_key_path,
+        taps.guest_host(),
+        22,
+        GUEST_USER,
+        std::path::Path::new(GUEST_AGENT_SRC),
+        GUEST_AGENT_DST,
+        SSH_TIMEOUT,
+    )
+    .context("failed to copy guest_diag agent")?;
+    debug!("guest_diag agent copied");
+
     // Start a TCP echo server in the guest using python3 (always available)
     ssh_command(
         &ci.ssh_key_path,
         taps.guest_host(),
         22,
         GUEST_USER,
-        ECHO_SERVER_CMD,
+        &format!("nohup python3 {GUEST_AGENT_DST} </dev/null >/dev/null 2>&1 &"),
         SSH_TIMEOUT,
     )
-    .context("failed to start echo server")?;
-    debug!("echo server started on guest port {ECHO_PORT}");
+    .context("failed to start guest_diag agent")?;
+    debug!("guest_diag agent started on port {ECHO_PORT}");
+
+    // Open a persistent TCP connection to the echo server
+    let mut stream = connect_echo(taps.guest_host(), ECHO_PORT, SSH_TIMEOUT)
+        .context("failed to connect to echo server")?;
+    debug!("TCP connection established to echo server");
+
+    // Verify echo works before migration
+    let reply = echo_roundtrip(&mut stream, "before-migration", Duration::from_secs(5))?;
+    ensure!(
+        reply == "before-migration",
+        "unexpected echo reply before migration: {reply}"
+    );
+    debug!("echo verified before migration");
 
     // Optionally copy and start stress-ng to load the guest during migration
-    if stress_ng {
+    let stress_ng_pid = if stress_ng {
         scp_to_guest(
             &ci.ssh_key_path,
             taps.guest_host(),
@@ -282,23 +345,13 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8, stress_ng: bool)
             SSH_TIMEOUT,
         )
         .context("failed to start stress-ng")?;
-        ensure_stress_ng_running(&ci.ssh_key_path, taps.guest_host())
-            .context("stress-ng did not stay running on source")?;
         debug!("stress-ng running in guest ({vm_bytes_mb}M vm-bytes)");
-    }
-
-    // Open a persistent TCP connection to the echo server
-    let mut stream = connect_echo(taps.guest_host(), ECHO_PORT, SSH_TIMEOUT)
-        .context("failed to connect to echo server")?;
-    debug!("TCP connection established to echo server");
-
-    // Verify echo works before migration
-    let reply = echo_roundtrip(&mut stream, "before-migration", Duration::from_secs(5))?;
-    ensure!(
-        reply == "before-migration",
-        "unexpected echo reply before migration: {reply}"
-    );
-    debug!("echo verified before migration");
+        let pid = stress_ng_pid(&mut stream)?;
+        debug!("guest_diag after stress-ng start: stress-ng-pid={pid}");
+        Some(pid)
+    } else {
+        None
+    };
 
     // Spawn destination in incoming mode with its own cidata copy
     let dst_cfg = base_cfg
@@ -327,11 +380,9 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8, stress_ng: bool)
         "unexpected echo reply after migration: {reply}"
     );
     debug!("echo verified after migration — TCP connection survived");
-
-    if stress_ng {
-        ensure_stress_ng_running(&ci.ssh_key_path, taps.guest_host())
-            .context("stress-ng did not survive migration")?;
-        debug!("stress-ng verified after migration");
+    log_guest_diagnostics(&mut stream, "after migration")?;
+    if let Some(stress_ng_pid) = stress_ng_pid {
+        verify_stress_ng_pid_exists(&mut stream, "after migration", &stress_ng_pid)?;
     }
 
     Ok(())
