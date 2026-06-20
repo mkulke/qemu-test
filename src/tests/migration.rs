@@ -134,7 +134,7 @@ fn wait_for_stress_ng_pid(stream: &mut TcpStream, timeout: Duration) -> Result<S
         if let Ok(pid) = stress_ng_pid(stream) {
             return Ok(pid);
         }
-        if start.elapsed() > timeout {
+        if start.elapsed() >= timeout {
             return stress_ng_pid(stream);
         }
         sleep(STRESS_NG_WAIT_INTERVAL);
@@ -152,7 +152,7 @@ fn wait_for_stress_ng_pid_exists(
         if verify_stress_ng_pid_exists(stream, phase, pid).is_ok() {
             return Ok(());
         }
-        if start.elapsed() > timeout {
+        if start.elapsed() >= timeout {
             return verify_stress_ng_pid_exists(stream, phase, pid);
         }
         sleep(STRESS_NG_WAIT_INTERVAL);
