@@ -25,6 +25,8 @@ const OS_BOOT_TIMEOUT: Duration = Duration::from_secs(60);
 const MIGRATION_TIMEOUT: Duration = Duration::from_secs(10);
 const MIGRATION_STRESS_TIMEOUT: Duration = Duration::from_secs(60);
 const SSH_TIMEOUT: Duration = Duration::from_secs(30);
+const STRESS_NG_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
+const STRESS_NG_WAIT_INTERVAL: Duration = Duration::from_millis(200);
 const ECHO_PORT: u16 = 7777;
 const STRESS_NG_BIN: &str = "payload/stress-ng";
 const GUEST_AGENT_SRC: &str = "src/python/guest_diag_agent.py";
@@ -124,6 +126,37 @@ fn verify_stress_ng_pid_exists(stream: &mut TcpStream, phase: &str, pid: &str) -
     debug!("guest_diag {phase}: stress-ng-pid={pid}");
 
     Ok(())
+}
+
+fn wait_for_stress_ng_pid(stream: &mut TcpStream, timeout: Duration) -> Result<String> {
+    let start = Instant::now();
+    loop {
+        if let Ok(pid) = stress_ng_pid(stream) {
+            return Ok(pid);
+        }
+        if start.elapsed() > timeout {
+            return stress_ng_pid(stream);
+        }
+        sleep(STRESS_NG_WAIT_INTERVAL);
+    }
+}
+
+fn wait_for_stress_ng_pid_exists(
+    stream: &mut TcpStream,
+    phase: &str,
+    pid: &str,
+    timeout: Duration,
+) -> Result<()> {
+    let start = Instant::now();
+    loop {
+        if verify_stress_ng_pid_exists(stream, phase, pid).is_ok() {
+            return Ok(());
+        }
+        if start.elapsed() > timeout {
+            return verify_stress_ng_pid_exists(stream, phase, pid);
+        }
+        sleep(STRESS_NG_WAIT_INTERVAL);
+    }
 }
 
 fn do_migration(
@@ -346,7 +379,7 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8, stress_ng: bool)
         )
         .context("failed to start stress-ng")?;
         debug!("stress-ng running in guest ({vm_bytes_mb}M vm-bytes)");
-        let pid = stress_ng_pid(&mut stream)?;
+        let pid = wait_for_stress_ng_pid(&mut stream, STRESS_NG_WAIT_TIMEOUT)?;
         debug!("guest_diag after stress-ng start: stress-ng-pid={pid}");
         Some(pid)
     } else {
@@ -382,7 +415,12 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8, stress_ng: bool)
     debug!("echo verified after migration — TCP connection survived");
     log_guest_diagnostics(&mut stream, "after migration")?;
     if let Some(stress_ng_pid) = stress_ng_pid {
-        verify_stress_ng_pid_exists(&mut stream, "after migration", &stress_ng_pid)?;
+        wait_for_stress_ng_pid_exists(
+            &mut stream,
+            "after migration",
+            &stress_ng_pid,
+            STRESS_NG_WAIT_TIMEOUT,
+        )?;
     }
 
     Ok(())
