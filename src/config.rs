@@ -12,6 +12,7 @@ pub(crate) struct Config {
     test_repeat: Option<String>,
     keep_logs: Option<String>,
     test_junit_path: Option<String>,
+    test_stress_factor: Option<String>,
 }
 
 pub(crate) static CONFIG: LazyLock<Config> = LazyLock::new(|| Config {
@@ -22,6 +23,7 @@ pub(crate) static CONFIG: LazyLock<Config> = LazyLock::new(|| Config {
     test_repeat: env::var("TEST_REPEAT").ok(),
     keep_logs: env::var("KEEP_LOGS").ok(),
     test_junit_path: env::var("TEST_JUNIT_PATH").ok(),
+    test_stress_factor: env::var("TEST_STRESS_FACTOR").ok(),
 });
 
 const DEFAULT_ACCELERATOR: Accelerator = Accelerator::Kvm;
@@ -75,5 +77,16 @@ impl Config {
 
     pub fn test_junit_path(&self) -> Option<&str> {
         self.test_junit_path.as_deref()
+    }
+
+    pub fn test_stress_factor(&self) -> Result<f64> {
+        let Some(value) = self.test_stress_factor.as_deref() else {
+            return Ok(1.0);
+        };
+        let factor: f64 = value.parse().context("invalid TEST_STRESS_FACTOR value")?;
+        if factor <= 0.0 {
+            anyhow::bail!("TEST_STRESS_FACTOR must be greater than 0");
+        }
+        Ok(factor)
     }
 }

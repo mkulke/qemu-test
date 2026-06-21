@@ -37,6 +37,7 @@ The test setup can be configured via environment variables:
 - `KEEP_LOGS` - directory to keep logs of all tests (default: none)
 - `TEST_REPEAT` - number of times to repeat each test (default: 1)
 - `TEST_JUNIT_PATH` - path to output JUnit XML report (default: none)
+- `TEST_STRESS_FACTOR` - scaling factor for stress-ng load in migration tests (default: 1.0, e.g. 0.5 halves vm-bytes)
 
 ## Filter
 

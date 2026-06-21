@@ -1,4 +1,5 @@
 use crate::cloud_init::{CloudInitDisk, GUEST_USER};
+use crate::config::CONFIG;
 use crate::process::CpuModel as Cpu;
 use crate::process::{ExpectedOutput, Machine, QemuConfig, QemuPayload, QemuProcess, RtcClock};
 use crate::tests::full_os::{OS_READY_PATTERN, scp_to_guest, ssh_command};
@@ -371,7 +372,9 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8, stress_ng: bool)
         .context("failed to copy stress-ng to guest")?;
         debug!("stress-ng copied to guest");
 
-        let vm_bytes_mb = base_cfg.ram_mb() / 4;
+        let stress_factor = CONFIG.test_stress_factor()?;
+        let vm_bytes_mb = ((base_cfg.ram_mb() / 4) as f64 * stress_factor) as u64;
+        let vm_bytes_mb = vm_bytes_mb.max(1);
         let stress_ng_run_cmd = format!(
             "nohup /tmp/stress-ng --cpu 0 --vm 1 --vm-bytes {vm_bytes_mb}M --hdd 1 --timeout 0 </dev/null >/dev/null 2>&1 &"
         );
@@ -384,7 +387,7 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8, stress_ng: bool)
             SSH_TIMEOUT,
         )
         .context("failed to start stress-ng")?;
-        debug!("stress-ng running in guest ({vm_bytes_mb}M vm-bytes)");
+        debug!("stress-ng running in guest ({vm_bytes_mb}M vm-bytes, factor={stress_factor})");
         let pid = wait_for_stress_ng_pid(&mut stream, STRESS_NG_WAIT_TIMEOUT)?;
         debug!("guest_diag after stress-ng start: stress-ng-pid={pid}");
         Some(pid)
