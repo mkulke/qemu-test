@@ -37,6 +37,8 @@ The test setup can be configured via environment variables:
 - `KEEP_LOGS` - directory to keep logs of all tests (default: none)
 - `TEST_REPEAT` - number of times to repeat each test (default: 1)
 - `TEST_JUNIT_PATH` - path to output JUnit XML report (default: none)
+- `TEST_STRESS_FACTOR` - scaling factor for stress-ng load in migration tests (default: 1.0, e.g. 0.5 halves vm-bytes)
+- `TEST_MIGRATION_STRESS_TIMEOUT_SECS` - migration completion timeout for stress-ng migration tests (default: 60)
 
 ## Filter
 
@@ -54,6 +56,12 @@ make run TEST_FILTER=-migration,smp=2
 
 This runs tests matching `smp=2`, excluding tests whose label contains `migration`.
 If a test matches both positive and negative tokens, the negative token wins and the test is excluded.
+
+Join positive tokens with `+` when a single test must match all tokens:
+
+```bash
+make run TEST_FILTER=stress_ng=true+machine=pc+smp=1
+```
 
 ## Skipping
 

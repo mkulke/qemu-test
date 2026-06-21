@@ -23,7 +23,7 @@ static FILTER_TOKEN_RE: LazyLock<Regex> =
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TestFilter {
-    include: Vec<String>,
+    include: Vec<Vec<String>>,
     exclude: Vec<String>,
 }
 
@@ -33,16 +33,25 @@ impl TestFilter {
         let mut exclude = Vec::new();
 
         for token in raw.split(',') {
-            let (target, value) = if let Some(value) = token.strip_prefix('-') {
-                (&mut exclude, value)
+            if let Some(value) = token.strip_prefix('-') {
+                if !FILTER_TOKEN_RE.is_match(value) {
+                    bail!("invalid filter token: '{token}'. expected {FILTER_TOKEN_PATTERN}");
+                }
+                exclude.push(value.to_string());
             } else {
-                (&mut include, token)
-            };
-
-            if !FILTER_TOKEN_RE.is_match(value) {
-                bail!("invalid filter token: '{token}'. expected {FILTER_TOKEN_PATTERN}");
+                let clause: Vec<String> = token
+                    .split('+')
+                    .map(|value| {
+                        if !FILTER_TOKEN_RE.is_match(value) {
+                            bail!(
+                                "invalid filter token: '{token}'. expected {FILTER_TOKEN_PATTERN}"
+                            );
+                        }
+                        Ok(value.to_string())
+                    })
+                    .collect::<Result<_>>()?;
+                include.push(clause);
             }
-            target.push(value.to_string());
         }
 
         Ok(Self { include, exclude })
@@ -54,7 +63,10 @@ impl TestFilter {
         }
 
         if !self.include.is_empty() {
-            return self.include.iter().any(|f| label.contains(f));
+            return self
+                .include
+                .iter()
+                .any(|clause| clause.iter().all(|f| label.contains(f)));
         }
 
         skip_reason.is_none()
@@ -64,7 +76,13 @@ impl TestFilter {
 impl Display for TestFilter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if !self.include.is_empty() {
-            write!(f, "include: {}", self.include.join("|"))?;
+            let include = self
+                .include
+                .iter()
+                .map(|clause| clause.join("+"))
+                .collect::<Vec<_>>()
+                .join("|");
+            write!(f, "include: {include}")?;
             if !self.exclude.is_empty() {
                 write!(f, ", ")?;
             }
@@ -282,5 +300,27 @@ mod tests {
         assert!(!filter.matches("test_kernel_boot(machine=pc, smp=1, cpu=qemu64)", None));
         // Does not exclude None variant (param absent)
         assert!(filter.matches("test_kernel_boot(machine=pc, smp=1)", None));
+    }
+
+    #[test]
+    fn include_clause_requires_all_tokens_to_match() {
+        let filter =
+            TestFilter::parse("stress_ng=true+machine=pc+smp=1").expect("filter should parse");
+        assert!(filter.matches(
+            "test_live_migration_os(machine=pc, smp=1, stress_ng=true)",
+            Some("skip reason")
+        ));
+        assert!(!filter.matches(
+            "test_live_migration_os(machine=q35, smp=1, stress_ng=true)",
+            Some("skip reason")
+        ));
+        assert!(!filter.matches(
+            "test_live_migration_os(machine=pc, smp=2, stress_ng=true)",
+            Some("skip reason")
+        ));
+        assert!(!filter.matches(
+            "test_live_migration_os(machine=pc, smp=1, stress_ng=false)",
+            Some("skip reason")
+        ));
     }
 }

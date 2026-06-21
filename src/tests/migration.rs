@@ -1,4 +1,5 @@
 use crate::cloud_init::{CloudInitDisk, GUEST_USER};
+use crate::config::CONFIG;
 use crate::process::CpuModel as Cpu;
 use crate::process::{ExpectedOutput, Machine, QemuConfig, QemuPayload, QemuProcess, RtcClock};
 use crate::tests::full_os::{OS_READY_PATTERN, scp_to_guest, ssh_command};
@@ -23,10 +24,12 @@ const INITRD: &str = "payload/initrd.img";
 const OS_IMAGE: &str = "payload/os-image.qcow2";
 const OS_BOOT_TIMEOUT: Duration = Duration::from_secs(60);
 const MIGRATION_TIMEOUT: Duration = Duration::from_secs(10);
-const MIGRATION_STRESS_TIMEOUT: Duration = Duration::from_secs(60);
 const SSH_TIMEOUT: Duration = Duration::from_secs(30);
+const STRESS_NG_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
+const STRESS_NG_WAIT_INTERVAL: Duration = Duration::from_millis(200);
 const ECHO_PORT: u16 = 7777;
 const STRESS_NG_BIN: &str = "payload/stress-ng";
+const STRESS_NG_LOG: &str = "/tmp/stress-ng.log";
 const GUEST_AGENT_SRC: &str = "src/python/guest_diag_agent.py";
 const GUEST_AGENT_DST: &str = "/tmp/qemu-test-guest-agent.py";
 const DIAG_UPTIME: &str = "__diag__:uptime";
@@ -126,6 +129,41 @@ fn verify_stress_ng_pid_exists(stream: &mut TcpStream, phase: &str, pid: &str) -
     Ok(())
 }
 
+fn wait_for_stress_ng_pid(stream: &mut TcpStream, timeout: Duration) -> Result<String> {
+    let start = Instant::now();
+    loop {
+        match stress_ng_pid(stream) {
+            Ok(pid) => return Ok(pid),
+            Err(err) => {
+                if start.elapsed() >= timeout {
+                    return Err(err);
+                }
+            }
+        }
+        sleep(STRESS_NG_WAIT_INTERVAL);
+    }
+}
+
+fn wait_for_stress_ng_pid_exists(
+    stream: &mut TcpStream,
+    phase: &str,
+    pid: &str,
+    timeout: Duration,
+) -> Result<()> {
+    let start = Instant::now();
+    loop {
+        match verify_stress_ng_pid_exists(stream, phase, pid) {
+            Ok(()) => return Ok(()),
+            Err(err) => {
+                if start.elapsed() >= timeout {
+                    return Err(err);
+                }
+            }
+        }
+        sleep(STRESS_NG_WAIT_INTERVAL);
+    }
+}
+
 fn do_migration(
     src: &mut QemuProcess,
     dst: &mut QemuProcess,
@@ -221,6 +259,8 @@ pub(crate) fn test_live_migration_kernel(cpu: Cpu, smp: u8) -> Result<()> {
     Ok(())
 }
 
+// The stress_ng parameter is emitted in test labels as stress_ng=true/false, allowing
+// action.yml to select only the stress-ng OS migration cases.
 // #[test_fn(machine = Machine::Q35, smp = 1)]
 #[test_fn(
     machine = {Machine::Pc, Machine::Q35},
@@ -332,9 +372,21 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8, stress_ng: bool)
         .context("failed to copy stress-ng to guest")?;
         debug!("stress-ng copied to guest");
 
-        let vm_bytes_mb = base_cfg.ram_mb() / 4;
+        ssh_command(
+            &ci.ssh_key_path,
+            taps.guest_host(),
+            22,
+            GUEST_USER,
+            "chmod +x /tmp/stress-ng",
+            SSH_TIMEOUT,
+        )
+        .context("failed to chmod stress-ng")?;
+
+        let stress_factor = CONFIG.test_stress_factor()?;
+        let vm_bytes_scaled = (base_cfg.ram_mb() as f64 / 4.0) * stress_factor;
+        let vm_bytes_mb = (vm_bytes_scaled as u64).max(1);
         let stress_ng_run_cmd = format!(
-            "nohup /tmp/stress-ng --cpu 0 --vm 1 --vm-bytes {vm_bytes_mb}M --hdd 1 --timeout 0 </dev/null >/dev/null 2>&1 &"
+            "nohup /tmp/stress-ng --cpu 0 --vm 1 --vm-bytes {vm_bytes_mb}M --hdd 1 --timeout 0 </dev/null >{STRESS_NG_LOG} 2>&1 &"
         );
         ssh_command(
             &ci.ssh_key_path,
@@ -345,8 +397,20 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8, stress_ng: bool)
             SSH_TIMEOUT,
         )
         .context("failed to start stress-ng")?;
-        debug!("stress-ng running in guest ({vm_bytes_mb}M vm-bytes)");
-        let pid = stress_ng_pid(&mut stream)?;
+        debug!("stress-ng running in guest ({vm_bytes_mb}M vm-bytes, factor={stress_factor})");
+        let pid = wait_for_stress_ng_pid(&mut stream, STRESS_NG_WAIT_TIMEOUT).map_err(|err| {
+            // Fetch stress-ng log to help diagnose startup failures.
+            let log = ssh_command(
+                &ci.ssh_key_path,
+                taps.guest_host(),
+                22,
+                GUEST_USER,
+                &format!("cat {STRESS_NG_LOG} 2>/dev/null || echo '(log not found)'"),
+                SSH_TIMEOUT,
+            )
+            .unwrap_or_else(|e| format!("(failed to retrieve log: {e})"));
+            err.context(format!("stress-ng log: {log}"))
+        })?;
         debug!("guest_diag after stress-ng start: stress-ng-pid={pid}");
         Some(pid)
     } else {
@@ -362,7 +426,7 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8, stress_ng: bool)
 
     // Migrate
     let mig_timeout = if stress_ng {
-        MIGRATION_STRESS_TIMEOUT
+        CONFIG.test_migration_stress_timeout()?
     } else {
         MIGRATION_TIMEOUT
     };
@@ -382,7 +446,12 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8, stress_ng: bool)
     debug!("echo verified after migration — TCP connection survived");
     log_guest_diagnostics(&mut stream, "after migration")?;
     if let Some(stress_ng_pid) = stress_ng_pid {
-        verify_stress_ng_pid_exists(&mut stream, "after migration", &stress_ng_pid)?;
+        wait_for_stress_ng_pid_exists(
+            &mut stream,
+            "after migration",
+            &stress_ng_pid,
+            STRESS_NG_WAIT_TIMEOUT,
+        )?;
     }
 
     Ok(())

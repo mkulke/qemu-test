@@ -547,6 +547,9 @@ impl QemuProcess {
             if start.elapsed() > timeout {
                 bail!("timeout waiting for expected output");
             }
+            if let Some(status) = self.child.try_wait().context("failed to poll child")? {
+                bail!("QEMU exited before expected output: {status}");
+            }
 
             match self.read_chunk(&mut partial)? {
                 ChunkResult::Line(line) => {
