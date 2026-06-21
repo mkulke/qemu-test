@@ -372,10 +372,20 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8, stress_ng: bool)
         .context("failed to copy stress-ng to guest")?;
         debug!("stress-ng copied to guest");
 
+        ssh_command(
+            &ci.ssh_key_path,
+            taps.guest_host(),
+            22,
+            GUEST_USER,
+            "chmod +x /tmp/stress-ng",
+            SSH_TIMEOUT,
+        )
+        .context("failed to chmod stress-ng")?;
+
         let stress_factor = CONFIG.test_stress_factor()?;
         let vm_bytes_mb = (((base_cfg.ram_mb() / 4) as f64 * stress_factor) as u64).max(1);
         let stress_ng_run_cmd = format!(
-            "nohup /tmp/stress-ng --cpu 0 --vm 1 --vm-bytes {vm_bytes_mb}M --hdd 1 --timeout 0 </dev/null >/dev/null 2>&1 &"
+            "nohup /tmp/stress-ng --cpu 0 --vm 1 --vm-bytes {vm_bytes_mb}M --hdd 1 --timeout 0 </dev/null >/tmp/stress-ng.log 2>&1 &"
         );
         ssh_command(
             &ci.ssh_key_path,
@@ -387,7 +397,20 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8, stress_ng: bool)
         )
         .context("failed to start stress-ng")?;
         debug!("stress-ng running in guest ({vm_bytes_mb}M vm-bytes, factor={stress_factor})");
-        let pid = wait_for_stress_ng_pid(&mut stream, STRESS_NG_WAIT_TIMEOUT)?;
+        let pid = wait_for_stress_ng_pid(&mut stream, STRESS_NG_WAIT_TIMEOUT)
+            .or_else(|err| {
+                // Fetch stress-ng log to help diagnose startup failures.
+                let log = ssh_command(
+                    &ci.ssh_key_path,
+                    taps.guest_host(),
+                    22,
+                    GUEST_USER,
+                    "cat /tmp/stress-ng.log 2>/dev/null || echo '(log not found)'",
+                    SSH_TIMEOUT,
+                )
+                .unwrap_or_else(|e| format!("(failed to retrieve log: {e})"));
+                Err(err.context(format!("stress-ng log: {log}")))
+            })?;
         debug!("guest_diag after stress-ng start: stress-ng-pid={pid}");
         Some(pid)
     } else {
