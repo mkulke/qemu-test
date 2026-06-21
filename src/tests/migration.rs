@@ -30,6 +30,7 @@ const STRESS_NG_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 const STRESS_NG_WAIT_INTERVAL: Duration = Duration::from_millis(200);
 const ECHO_PORT: u16 = 7777;
 const STRESS_NG_BIN: &str = "payload/stress-ng";
+const STRESS_NG_LOG: &str = "/tmp/stress-ng.log";
 const GUEST_AGENT_SRC: &str = "src/python/guest_diag_agent.py";
 const GUEST_AGENT_DST: &str = "/tmp/qemu-test-guest-agent.py";
 const DIAG_UPTIME: &str = "__diag__:uptime";
@@ -383,10 +384,10 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8, stress_ng: bool)
         .context("failed to chmod stress-ng")?;
 
         let stress_factor = CONFIG.test_stress_factor()?;
-        let vm_bytes_scaled = (base_cfg.ram_mb() / 4) as f64 * stress_factor;
+        let vm_bytes_scaled = (base_cfg.ram_mb() as f64 / 4.0) * stress_factor;
         let vm_bytes_mb = (vm_bytes_scaled as u64).max(1);
         let stress_ng_run_cmd = format!(
-            "nohup /tmp/stress-ng --cpu 0 --vm 1 --vm-bytes {vm_bytes_mb}M --hdd 1 --timeout 0 </dev/null >/tmp/stress-ng.log 2>&1 &"
+            "nohup /tmp/stress-ng --cpu 0 --vm 1 --vm-bytes {vm_bytes_mb}M --hdd 1 --timeout 0 </dev/null >{STRESS_NG_LOG} 2>&1 &"
         );
         ssh_command(
             &ci.ssh_key_path,
@@ -405,7 +406,7 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8, stress_ng: bool)
                 taps.guest_host(),
                 22,
                 GUEST_USER,
-                "cat /tmp/stress-ng.log 2>/dev/null || echo '(log not found)'",
+                &format!("cat {STRESS_NG_LOG} 2>/dev/null || echo '(log not found)'"),
                 SSH_TIMEOUT,
             )
             .unwrap_or_else(|e| format!("(failed to retrieve log: {e})"));
