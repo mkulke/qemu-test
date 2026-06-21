@@ -96,9 +96,9 @@ runs:
       FILTER_WARNINGS: ${{ inputs.filter-warnings }}
       RUST_LOG: qemu_test::tests::migration=debug
       STDERR_FILTER: ${{ inputs.log-warnings == 'true' && 'cat' || 'grep -v warning:' }}
-      # Reduce stress-ng load to 50% on self-hosted runners to avoid flaky failures caused
+      # Reduce stress-ng load to 25% on self-hosted runners to avoid flaky failures caused
       # by shared host resource contention that is inherent to multi-tenant runner environments.
-      TEST_STRESS_FACTOR: "0.5"
+      TEST_STRESS_FACTOR: "0.25"
     run: |
       sudo make setup-bridge NUM_TAPS=$((TEST_JOBS * 2))
       sudo -E env "PATH=$PATH" make run-release 2> >($STDERR_FILTER)

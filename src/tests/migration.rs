@@ -398,20 +398,19 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8, stress_ng: bool)
         )
         .context("failed to start stress-ng")?;
         debug!("stress-ng running in guest ({vm_bytes_mb}M vm-bytes, factor={stress_factor})");
-        let pid = wait_for_stress_ng_pid(&mut stream, STRESS_NG_WAIT_TIMEOUT)
-            .or_else(|err| {
-                // Fetch stress-ng log to help diagnose startup failures.
-                let log = ssh_command(
-                    &ci.ssh_key_path,
-                    taps.guest_host(),
-                    22,
-                    GUEST_USER,
-                    "cat /tmp/stress-ng.log 2>/dev/null || echo '(log not found)'",
-                    SSH_TIMEOUT,
-                )
-                .unwrap_or_else(|e| format!("(failed to retrieve log: {e})"));
-                Err(err.context(format!("stress-ng log: {log}")))
-            })?;
+        let pid = wait_for_stress_ng_pid(&mut stream, STRESS_NG_WAIT_TIMEOUT).or_else(|err| {
+            // Fetch stress-ng log to help diagnose startup failures.
+            let log = ssh_command(
+                &ci.ssh_key_path,
+                taps.guest_host(),
+                22,
+                GUEST_USER,
+                "cat /tmp/stress-ng.log 2>/dev/null || echo '(log not found)'",
+                SSH_TIMEOUT,
+            )
+            .unwrap_or_else(|e| format!("(failed to retrieve log: {e})"));
+            Err(err.context(format!("stress-ng log: {log}")))
+        })?;
         debug!("guest_diag after stress-ng start: stress-ng-pid={pid}");
         Some(pid)
     } else {
