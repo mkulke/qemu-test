@@ -93,6 +93,7 @@ runs:
       # Run stress-ng migration cases sequentially to avoid shared host resource contention.
       TEST_JOBS: "1"
       TEST_JUNIT_PATH: ${{ github.action_path }}/junit-migration.xml
+      TEST_MIGRATION_STRESS_TIMEOUT_SECS: "10"
       FILTER_WARNINGS: ${{ inputs.filter-warnings }}
       RUST_LOG: qemu_test::tests::migration=debug
       STDERR_FILTER: ${{ inputs.log-warnings == 'true' && 'cat' || 'grep -v warning:' }}

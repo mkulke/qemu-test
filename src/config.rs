@@ -3,6 +3,7 @@ use crate::util::TestFilter;
 use anyhow::{Context, Result};
 use std::env;
 use std::sync::LazyLock;
+use std::time::Duration;
 
 pub(crate) struct Config {
     qemu_bin: Option<String>,
@@ -13,6 +14,7 @@ pub(crate) struct Config {
     keep_logs: Option<String>,
     test_junit_path: Option<String>,
     test_stress_factor: Option<String>,
+    test_migration_stress_timeout_secs: Option<String>,
 }
 
 pub(crate) static CONFIG: LazyLock<Config> = LazyLock::new(|| Config {
@@ -24,6 +26,7 @@ pub(crate) static CONFIG: LazyLock<Config> = LazyLock::new(|| Config {
     keep_logs: env::var("KEEP_LOGS").ok(),
     test_junit_path: env::var("TEST_JUNIT_PATH").ok(),
     test_stress_factor: env::var("TEST_STRESS_FACTOR").ok(),
+    test_migration_stress_timeout_secs: env::var("TEST_MIGRATION_STRESS_TIMEOUT_SECS").ok(),
 });
 
 const DEFAULT_ACCELERATOR: Accelerator = Accelerator::Kvm;
@@ -88,5 +91,18 @@ impl Config {
             anyhow::bail!("TEST_STRESS_FACTOR must be greater than 0");
         }
         Ok(factor)
+    }
+
+    pub fn test_migration_stress_timeout(&self) -> Result<Duration> {
+        let Some(value) = self.test_migration_stress_timeout_secs.as_deref() else {
+            return Ok(Duration::from_secs(60));
+        };
+        let secs: u64 = value
+            .parse()
+            .context("invalid TEST_MIGRATION_STRESS_TIMEOUT_SECS value")?;
+        if secs == 0 {
+            anyhow::bail!("TEST_MIGRATION_STRESS_TIMEOUT_SECS must be at least 1");
+        }
+        Ok(Duration::from_secs(secs))
     }
 }

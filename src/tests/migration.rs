@@ -24,7 +24,6 @@ const INITRD: &str = "payload/initrd.img";
 const OS_IMAGE: &str = "payload/os-image.qcow2";
 const OS_BOOT_TIMEOUT: Duration = Duration::from_secs(60);
 const MIGRATION_TIMEOUT: Duration = Duration::from_secs(10);
-const MIGRATION_STRESS_TIMEOUT: Duration = Duration::from_secs(60);
 const SSH_TIMEOUT: Duration = Duration::from_secs(30);
 const STRESS_NG_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 const STRESS_NG_WAIT_INTERVAL: Duration = Duration::from_millis(200);
@@ -427,7 +426,7 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8, stress_ng: bool)
 
     // Migrate
     let mig_timeout = if stress_ng {
-        MIGRATION_STRESS_TIMEOUT
+        CONFIG.test_migration_stress_timeout()?
     } else {
         MIGRATION_TIMEOUT
     };
