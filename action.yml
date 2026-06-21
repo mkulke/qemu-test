@@ -88,8 +88,8 @@ runs:
     env:
       ACCEL: ${{ inputs.accel }}
       QEMU_BIN: ${{ inputs.qemu_bin }}
-      # Run one representative stress-ng migration case for fast debug feedback.
-      TEST_FILTER: stress_ng=true+machine=pc+smp=1
+      # Default to one representative stress-ng migration case for fast debug feedback.
+      TEST_FILTER: ${{ inputs.test_filter || 'stress_ng=true+machine=pc+smp=1' }}
       # Run stress-ng migration cases sequentially to avoid shared host resource contention.
       TEST_JOBS: "1"
       TEST_JUNIT_PATH: ${{ github.action_path }}/junit-migration.xml
