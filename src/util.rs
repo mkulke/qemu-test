@@ -79,7 +79,7 @@ impl Display for TestFilter {
             let include = self
                 .include
                 .iter()
-                .map(|clause| clause.join("&"))
+                .map(|clause| clause.join("+"))
                 .collect::<Vec<_>>()
                 .join("|");
             write!(f, "include: {include}")?;
