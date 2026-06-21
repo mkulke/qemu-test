@@ -373,8 +373,7 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8, stress_ng: bool)
         debug!("stress-ng copied to guest");
 
         let stress_factor = CONFIG.test_stress_factor()?;
-        let vm_bytes_mb = ((base_cfg.ram_mb() / 4) as f64 * stress_factor) as u64;
-        let vm_bytes_mb = vm_bytes_mb.max(1);
+        let vm_bytes_mb = (((base_cfg.ram_mb() / 4) as f64 * stress_factor) as u64).max(1);
         let stress_ng_run_cmd = format!(
             "nohup /tmp/stress-ng --cpu 0 --vm 1 --vm-bytes {vm_bytes_mb}M --hdd 1 --timeout 0 </dev/null >/dev/null 2>&1 &"
         );
