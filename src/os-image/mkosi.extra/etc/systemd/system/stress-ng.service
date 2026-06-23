@@ -1,0 +1,12 @@
+[Unit]
+Description=stress-ng load generator
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/default/qemu-mshv-selftest-stress
+ExecStart=/usr/bin/stress-ng $STRESS_NG_ARGS
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

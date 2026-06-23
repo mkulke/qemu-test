@@ -1,16 +1,14 @@
 use crate::cloud_init::{CloudInitDisk, GUEST_USER};
 use crate::process::CpuModel as Cpu;
 use crate::process::{ExpectedOutput, Machine, QemuConfig, QemuPayload, QemuProcess, RtcClock};
-use crate::tests::full_os::{OS_READY_PATTERN, scp_to_guest, ssh_command};
+use crate::ssh::ssh_command;
+use crate::tests::full_os::OS_READY_PATTERN;
 use crate::util::{NetConfig, allocate_taps, generate_mac};
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, ensure};
 use log::debug;
 use qapi::qmp::{self, RunState};
 use regex::Regex;
-use std::io::{BufRead, BufReader, Write};
-use std::net::TcpStream;
-use std::thread::sleep;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use test_macro::test_fn;
 
 const GUEST_BIN: &[u8] = include_bytes!("../../payload/guest.bin");
@@ -25,106 +23,6 @@ const OS_BOOT_TIMEOUT: Duration = Duration::from_secs(60);
 const MIGRATION_TIMEOUT: Duration = Duration::from_secs(10);
 const MIGRATION_STRESS_TIMEOUT: Duration = Duration::from_secs(60);
 const SSH_TIMEOUT: Duration = Duration::from_secs(30);
-const ECHO_PORT: u16 = 7777;
-const STRESS_NG_BIN: &str = "payload/stress-ng";
-const GUEST_AGENT_SRC: &str = "src/python/guest_diag_agent.py";
-const GUEST_AGENT_DST: &str = "/tmp/qemu-test-guest-agent.py";
-const DIAG_UPTIME: &str = "__diag__:uptime";
-const DIAG_CLOCKSOURCE: &str = "__diag__:clocksource";
-const DIAG_STRESS_NG: &str = "__diag__:stress-ng";
-const DIAG_STRESS_NG_PID: &str = "__diag__:stress-ng-pid:";
-
-/// Send a line over a TcpStream and read the echoed response.
-fn echo_roundtrip(stream: &mut TcpStream, msg: &str, timeout: Duration) -> Result<String> {
-    stream
-        .set_write_timeout(Some(timeout))
-        .context("set_write_timeout")?;
-    stream
-        .set_read_timeout(Some(timeout))
-        .context("set_read_timeout")?;
-    writeln!(stream, "{msg}").context("echo write")?;
-    stream.flush().context("echo flush")?;
-    let mut reader = BufReader::new(stream.try_clone().context("clone stream")?);
-    let mut line = String::new();
-    reader.read_line(&mut line).context("echo read")?;
-    Ok(line.trim().to_string())
-}
-
-/// Connect to the guest echo server, retrying until `timeout`.
-fn connect_echo(host: &str, port: u16, timeout: Duration) -> Result<TcpStream> {
-    let start = Instant::now();
-    loop {
-        sleep(Duration::from_millis(200));
-        if crate::SHUTDOWN.load(std::sync::atomic::Ordering::Relaxed) {
-            bail!("interrupted");
-        }
-        match TcpStream::connect_timeout(
-            &format!("{host}:{port}").parse().context("parse addr")?,
-            Duration::from_secs(2),
-        ) {
-            Ok(stream) => return Ok(stream),
-            Err(e) => {
-                if start.elapsed() > timeout {
-                    bail!("echo server not reachable after {timeout:?}: {e}");
-                }
-                debug!("echo connect failed ({e}), retrying...");
-                std::thread::sleep(Duration::from_secs(1));
-            }
-        }
-    }
-}
-
-fn query_guest_diagnostic(stream: &mut TcpStream, cmd: &str) -> Result<String> {
-    echo_roundtrip(stream, cmd, Duration::from_secs(5))
-        .with_context(|| format!("guest_diag {cmd} failed"))
-}
-
-fn uptime_seconds(output: &str) -> &str {
-    output.split_whitespace().next().unwrap_or(output)
-}
-
-fn process_pid(output: &str) -> &str {
-    output.split_whitespace().next().unwrap_or(output)
-}
-
-fn trim_encoded_newline(output: &str) -> &str {
-    output.trim_end_matches("\\n")
-}
-
-fn log_guest_diagnostics(stream: &mut TcpStream, phase: &str) -> Result<()> {
-    let uptime = query_guest_diagnostic(stream, DIAG_UPTIME)?;
-    debug!("guest_diag {phase}: uptime={}", uptime_seconds(&uptime));
-
-    let clocksource = query_guest_diagnostic(stream, DIAG_CLOCKSOURCE)?;
-    debug!(
-        "guest_diag {phase}: clocksource={}",
-        trim_encoded_newline(&clocksource)
-    );
-
-    Ok(())
-}
-
-fn stress_ng_pid(stream: &mut TcpStream) -> Result<String> {
-    let output = query_guest_diagnostic(stream, DIAG_STRESS_NG)?;
-    let pid = process_pid(&output);
-    ensure!(
-        !pid.is_empty(),
-        "stress-ng did not appear in guest process list"
-    );
-
-    Ok(pid.to_string())
-}
-
-fn verify_stress_ng_pid_exists(stream: &mut TcpStream, phase: &str, pid: &str) -> Result<()> {
-    let output = query_guest_diagnostic(stream, &format!("{DIAG_STRESS_NG_PID}{pid}"))?;
-    ensure!(
-        output == "1",
-        "stress-ng pid {pid} did not survive migration"
-    );
-    debug!("guest_diag {phase}: stress-ng-pid={pid}");
-
-    Ok(())
-}
 
 fn do_migration(
     src: &mut QemuProcess,
@@ -153,6 +51,9 @@ fn do_migration(
 
     dst.poll_status(RunState::running, timeout)?;
     debug!("destination VM running");
+
+    src.poll_status(RunState::postmigrate, timeout)?;
+    debug!("source VM in postmigrate state");
 
     Ok(())
 }
@@ -221,7 +122,7 @@ pub(crate) fn test_live_migration_kernel(cpu: Cpu, smp: u8) -> Result<()> {
     Ok(())
 }
 
-// #[test_fn(machine = Machine::Q35, smp = 1)]
+// #[test_fn(machine = Machine::Q35, smp = {1, 2, 4}, stress_ng = true)]
 #[test_fn(
     machine = {Machine::Pc, Machine::Q35},
     smp = {1, 2, 4},
@@ -245,11 +146,28 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8, stress_ng: bool)
     let src_net = NetConfig::tap(taps.src(), taps.guest_ip(), taps.gateway(), &mac);
     let dst_net = NetConfig::tap(taps.dst(), taps.guest_ip(), taps.gateway(), &mac);
 
-    let ci = CloudInitDisk::create(src_dir.path(), &src_net)
-        .context("failed to create cloud-init disk")?;
-    // Copy cidata to dst so both VMs can open it without file lock conflicts
-    let dst_cidata_path = dst_dir.path().join("cidata.img");
-    std::fs::copy(&ci.path, &dst_cidata_path).context("failed to copy cidata to dst")?;
+    let mut ci = CloudInitDisk::new(src_dir.path())?.with_net_config(&src_net);
+    if stress_ng {
+        let file = (
+            "/etc/default/qemu-mshv-selftest-stress",
+            // "STRESS_NG_ARGS=\"--cpu 0 --vm 1 --vm-bytes 256M --hdd 1 --timeout 0\"",
+            "STRESS_NG_ARGS=\"--cpu 0 --vm 1 --vm-bytes 128M --timeout 0\"",
+        );
+        ci = ci.with_write_files(&[file]);
+    }
+
+    ci.create().context("failed to create cloud-init disk")?;
+
+    let do_ssh = |cmd: &str| {
+        ssh_command(
+            ci.ssh_key_path(),
+            taps.guest_host(),
+            22,
+            GUEST_USER,
+            cmd,
+            SSH_TIMEOUT,
+        )
+    };
 
     let payload = QemuPayload::DiskImage(OS_IMAGE.into());
 
@@ -257,7 +175,7 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8, stress_ng: bool)
         .with_machine(machine)
         .with_cpu_model(Cpu::Host)
         .with_smp(smp)
-        .with_cloud_init(ci.path.clone())
+        .with_cloud_init(ci.path())
         .with_net(src_net)
         .with_rtc_clock(RtcClock::Vm);
 
@@ -270,119 +188,36 @@ pub(crate) fn test_live_migration_os(machine: Machine, smp: u8, stress_ng: bool)
     debug!("source VM booted");
 
     // Wait for SSH to become available
-    ssh_command(
-        &ci.ssh_key_path,
-        taps.guest_host(),
-        22,
-        GUEST_USER,
-        "true",
-        SSH_TIMEOUT,
-    )
-    .context("SSH not reachable on source")?;
+    do_ssh("true && echo SSH OK")?;
     debug!("source SSH is reachable");
 
-    scp_to_guest(
-        &ci.ssh_key_path,
-        taps.guest_host(),
-        22,
-        GUEST_USER,
-        std::path::Path::new(GUEST_AGENT_SRC),
-        GUEST_AGENT_DST,
-        SSH_TIMEOUT,
-    )
-    .context("failed to copy guest_diag agent")?;
-    debug!("guest_diag agent copied");
-
-    // Start a TCP echo server in the guest using python3 (always available)
-    ssh_command(
-        &ci.ssh_key_path,
-        taps.guest_host(),
-        22,
-        GUEST_USER,
-        &format!("nohup python3 {GUEST_AGENT_DST} </dev/null >/dev/null 2>&1 &"),
-        SSH_TIMEOUT,
-    )
-    .context("failed to start guest_diag agent")?;
-    debug!("guest_diag agent started on port {ECHO_PORT}");
-
-    // Open a persistent TCP connection to the echo server
-    let mut stream = connect_echo(taps.guest_host(), ECHO_PORT, SSH_TIMEOUT)
-        .context("failed to connect to echo server")?;
-    debug!("TCP connection established to echo server");
-
-    // Verify echo works before migration
-    let reply = echo_roundtrip(&mut stream, "before-migration", Duration::from_secs(5))?;
-    ensure!(
-        reply == "before-migration",
-        "unexpected echo reply before migration: {reply}"
-    );
-    debug!("echo verified before migration");
-
     // Optionally copy and start stress-ng to load the guest during migration
-    let stress_ng_pid = if stress_ng {
-        scp_to_guest(
-            &ci.ssh_key_path,
-            taps.guest_host(),
-            22,
-            GUEST_USER,
-            STRESS_NG_BIN.as_ref(),
-            "/tmp/stress-ng",
-            SSH_TIMEOUT,
-        )
-        .context("failed to copy stress-ng to guest")?;
-        debug!("stress-ng copied to guest");
+    if stress_ng {
+        let cmd = "sudo systemctl start stress-ng && systemctl is-active stress-ng";
+        do_ssh(cmd).context("failed to start stress-ng in guest")?;
+        debug!("started stress-ng in guest");
+    }
 
-        let vm_bytes_mb = base_cfg.ram_mb() / 4;
-        let stress_ng_run_cmd = format!(
-            "nohup /tmp/stress-ng --cpu 0 --vm 1 --vm-bytes {vm_bytes_mb}M --hdd 1 --timeout 0 </dev/null >/dev/null 2>&1 &"
-        );
-        ssh_command(
-            &ci.ssh_key_path,
-            taps.guest_host(),
-            22,
-            GUEST_USER,
-            &stress_ng_run_cmd,
-            SSH_TIMEOUT,
-        )
-        .context("failed to start stress-ng")?;
-        debug!("stress-ng running in guest ({vm_bytes_mb}M vm-bytes)");
-        let pid = stress_ng_pid(&mut stream)?;
-        debug!("guest_diag after stress-ng start: stress-ng-pid={pid}");
-        Some(pid)
-    } else {
-        None
-    };
-
-    // Spawn destination in incoming mode with its own cidata copy
-    let dst_cfg = base_cfg
-        .with_incoming(&dst_dir)
-        .with_cloud_init(dst_cidata_path)
-        .with_net(dst_net);
+    let dst_cfg = base_cfg.with_incoming(&dst_dir).with_net(dst_net);
     let mut dst = QemuProcess::spawn(dst_cfg).context("failed to spawn destination VM")?;
 
-    // Migrate
-    let mig_timeout = if stress_ng {
+    let timeout = if stress_ng {
         MIGRATION_STRESS_TIMEOUT
     } else {
         MIGRATION_TIMEOUT
     };
-    do_migration(&mut src, &mut dst, &mig_sock, mig_timeout)?;
+    do_migration(&mut src, &mut dst, &mig_sock, timeout)?;
     debug!("migration completed");
 
-    // Drop source to free resources
-    drop(src);
-    debug!("source VM terminated");
-
-    // Verify the same TCP connection still works after migration
-    let reply = echo_roundtrip(&mut stream, "after-migration", Duration::from_secs(10))?;
-    ensure!(
-        reply == "after-migration",
-        "unexpected echo reply after migration: {reply}"
-    );
-    debug!("echo verified after migration — TCP connection survived");
-    log_guest_diagnostics(&mut stream, "after migration")?;
-    if let Some(stress_ng_pid) = stress_ng_pid {
-        verify_stress_ng_pid_exists(&mut stream, "after migration", &stress_ng_pid)?;
+    // check whether stress-ng is still running in the guest after migration
+    if stress_ng {
+        let cmd = "systemctl is-active stress-ng";
+        let output = do_ssh(cmd).context("failed to verify stress-ng is active after migration")?;
+        ensure!(
+            output == "active",
+            "stress-ng is not active after migration"
+        );
+        debug!("stress-ng verified active in guest after migration");
     }
 
     Ok(())

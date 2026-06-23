@@ -1,3 +1,5 @@
 **/target
 /payload
 /agent
+/src/os-image/mkosi.tools
+/src/os-image/mkosi.tools.manifest

@@ -13,6 +13,7 @@ mod cloud_init;
 mod config;
 mod junit;
 mod process;
+mod ssh;
 mod tests;
 mod util;
 

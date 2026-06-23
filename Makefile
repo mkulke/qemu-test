@@ -1,7 +1,3 @@
-STRESS_NG_VERSION = 0.21.00
-STRESS_NG_URL = https://github.com/ColinIanKing/stress-ng/archive/refs/tags/V$(STRESS_NG_VERSION).tar.gz
-STRESS_NG_SHA256 = 1339cbc6ccbff7e2ee2177bf0fd67e7b94e8ff7b07fe89bcfaec0280d800cf34
-STRESS_NG_BIN = payload/stress-ng
 GUEST_ASM = src/asm/boot.asm
 GUEST_BIN = payload/guest.bin
 GUEST_PIO_STR_ASM = src/asm/boot_pio_str.asm
@@ -28,11 +24,15 @@ INIT_SRC = src/lm_init.c
 OS_IMAGE = payload/os-image.qcow2
 OVMF_CODE = payload/OVMF_CODE.fd
 ALPINE_URL = https://dl-cdn.alpinelinux.org/alpine/v3.23/releases/x86_64/alpine-netboot-3.23.3-x86_64.tar.gz
-UBUNTU_URL = https://cloud-images.ubuntu.com/minimal/releases/jammy/release/ubuntu-22.04-minimal-cloudimg-amd64.img
 OVMF_DEB_URL = http://security.debian.org/debian-security/pool/updates/main/e/edk2/ovmf_2022.11-6+deb12u1_all.deb
+MKOSI_SHA = 9a28ad20bbea61894ea7b971d318a71f4374cf3b
+MKOSI_CMD = uv tool run --from git+https://github.com/systemd/mkosi.git#$(MKOSI_SHA)
+MKOSI_CONF = src/os-image/mkosi.conf
+IMAGE_RAW = payload/image.raw
+STRESS_NG_UNIT = src/os-image/mkosi.extra/etc/systemd/system/stress-ng.service
 QEMU_BIN ?= qemu-system-x86_64
-REQUIRED_BUILD_TOOLS = cargo nasm wget gcc cpio gzip
-REQUIRED_TOOLS = $(QEMU_BIN) ssh-keygen scp mkdosfs mcopy xmlstarlet
+REQUIRED_BUILD_TOOLS = cargo nasm wget gcc cpio gzip qemu-img dnf
+REQUIRED_TOOLS = $(QEMU_BIN) ssh-keygen mkdosfs mcopy xmlstarlet
 BRIDGE_NAME = qemu-br0
 BRIDGE_ADDR = 192.168.100.1/24
 TAP_PREFIX = tap-qemu
@@ -50,8 +50,7 @@ EMBEDDED_PAYLOADS = $(GUEST_BIN) \
 RUNTIME_PAYLOADS = $(VMLINUZ) \
 		   $(INITRD) \
 		   $(OS_IMAGE) \
-		   $(OVMF_CODE) \
-		   $(STRESS_NG_BIN)
+		   $(OVMF_CODE)
 
 .PHONY: echo-runtime-payloads build build-payloads build-release run run-release clean fmt lint check-build-tools check-tools setup-bridge teardown-bridge
 
@@ -87,9 +86,6 @@ $(OVMF_CODE):
 	wget -q $(OVMF_DEB_URL) -O ovmf.deb && \
 	ar p ovmf.deb data.tar.xz | tar xJ --strip-components=4 ./usr/share/OVMF/OVMF_CODE.fd && \
 	rm ovmf.deb
-
-$(OS_IMAGE):
-	wget -q $(UBUNTU_URL) -O $@
 
 $(VMLINUZ):
 	cd payload && \
@@ -127,16 +123,6 @@ $(INIT_BIN): $(INIT_SRC)
 	gcc -static -o $@ $<
 
 .DELETE_ON_ERROR:
-$(STRESS_NG_BIN):
-	d=$$(mktemp -d) && \
-	wget -q $(STRESS_NG_URL) -O $$d/stress-ng.tar.gz && \
-	echo "$(STRESS_NG_SHA256)  $$d/stress-ng.tar.gz" | sha256sum -c --quiet && \
-	tar xzf $$d/stress-ng.tar.gz -C $$d --strip-components=1 && \
-	$(MAKE) -C $$d CC="gcc" LDFLAGS="-static" -j$$(nproc) >/dev/null 2>&1 && \
-	cp $$d/stress-ng $@ && \
-	rm -rf $$d
-
-.DELETE_ON_ERROR:
 $(INITRD): $(INIT_BIN)
 	d=$$(mktemp -d) && \
 	mkdir -p $$d/{dev,proc,sys} && \
@@ -144,8 +130,16 @@ $(INITRD): $(INIT_BIN)
 	(cd $$d && find . | cpio --quiet -o -H newc | gzip -9) > $@ && \
 	rm -rf $$d
 
+$(IMAGE_RAW): $(MKOSI_CONF) $(STRESS_NG_UNIT)
+	$(MKOSI_CMD) -- mkosi build --force --directory src/os-image
+
+.DELETE_ON_ERROR:
+$(OS_IMAGE): $(IMAGE_RAW)
+	qemu-img convert -f raw -O qcow2 $< $@
+
 clean:
 	rm -f $(EMBEDDED_PAYLOADS) $(RUNTIME_PAYLOADS)
+	$(MKOSI_CMD) -- mkosi clean -ff --directory src/os-image
 	cargo clean
 
 fmt:

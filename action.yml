@@ -39,6 +39,9 @@ runs:
   - name: Install Rust
     uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1.15.4
 
+  - name: Install uv
+    uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+
   - name: Build cache params
     shell: bash
     working-directory: ${{ github.action_path }}

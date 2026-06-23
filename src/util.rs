@@ -157,7 +157,7 @@ pub(crate) fn allocate_taps() -> Result<TapPair> {
     Ok(TapPair::new(pair_index))
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) enum NetConfig {
     /// User-net (SLIRP) with SSH port forwarding. SSH via localhost:<discovered port>.
     UserNet { mac: String },

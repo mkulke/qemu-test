@@ -20,10 +20,17 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y nasm wget gcc make
+          sudo apt-get install -y nasm wget gcc make qemu-utils dnf
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
 
       - name: Check dependencies
         run: make check-build-tools
+
+      # Required for os-image build on ubuntu-24.04
+      - name: Disable AppArmor userns restriction
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Build
         run: make build
@@ -43,11 +50,17 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-              qemu-system-x86 \
-              mtools \
-              nasm \
-              wget \
-              xmlstarlet
+            dnf \
+            mtools \
+            nasm \
+            qemu-system-x86 \
+            qemu-utils \
+            wget \
+            xmlstarlet
+
+      # Required for os-image build on ubuntu-24.04
+      - name: Disable AppArmor userns restriction
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Run functional tests
         uses: ./

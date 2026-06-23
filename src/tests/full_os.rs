@@ -2,13 +2,12 @@ use crate::cloud_init::{CloudInitDisk, GUEST_USER};
 use crate::process::{
     CpuModel as Cpu, ExpectedOutput, Machine, QemuConfig, QemuPayload, QemuProcess,
 };
+use crate::ssh::{ssh_command, ssh_fire_and_forget};
 use crate::util::NetConfig;
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, ensure};
 use log::debug;
 use qapi::qmp;
-use std::path::Path;
-use std::process::Command;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use test_macro::test_fn;
 
 const OS_IMAGE: &str = "payload/os-image.qcow2";
@@ -16,117 +15,11 @@ const OVMF_CODE: &str = "payload/OVMF_CODE.fd";
 const BOOT_TIMEOUT: Duration = Duration::from_secs(45);
 const REBOOT_TIMEOUT: Duration = Duration::from_secs(60);
 const SSH_TIMEOUT: Duration = Duration::from_secs(10);
-pub(crate) const OS_READY_PATTERN: &str = r"Ubuntu (22|24).04.\d+ LTS cloud ttyS0";
-pub(crate) const SSH_ARGS: [&str; 6] = [
-    "-o",
-    "StrictHostKeyChecking=no",
-    "-o",
-    "UserKnownHostsFile=/dev/null",
-    "-o",
-    "LogLevel=ERROR",
-];
-
-pub(crate) fn ssh_command(
-    key_path: &Path,
-    host: &str,
-    port: u16,
-    user: &str,
-    command: &str,
-    timeout: Duration,
-) -> Result<String> {
-    let start = Instant::now();
-    loop {
-        if crate::SHUTDOWN.load(std::sync::atomic::Ordering::Relaxed) {
-            bail!("interrupted");
-        }
-        let var_args = [
-            "-o",
-            "ConnectTimeout=5",
-            "-o",
-            "BatchMode=yes",
-            "-i",
-            &key_path.to_string_lossy(),
-            "-p",
-            &port.to_string(),
-            &format!("{user}@{host}"),
-            command,
-        ];
-
-        let mut args = SSH_ARGS.to_vec();
-        args.extend_from_slice(&var_args);
-
-        let output = Command::new("ssh")
-            .args(args)
-            .output()
-            .context("failed to run ssh")?;
-
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            debug!("ssh output: {stdout}");
-            return Ok(stdout);
-        }
-
-        if start.elapsed() > timeout {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!("SSH failed after {timeout:?}: {stderr}");
-        }
-
-        debug!("SSH not ready, retrying...");
-        std::thread::sleep(Duration::from_secs(2));
-    }
-}
-
-pub(crate) fn scp_to_guest(
-    key_path: &Path,
-    host: &str,
-    port: u16,
-    user: &str,
-    local_path: &Path,
-    remote_path: &str,
-    timeout: Duration,
-) -> Result<()> {
-    let start = Instant::now();
-    loop {
-        if crate::SHUTDOWN.load(std::sync::atomic::Ordering::Relaxed) {
-            bail!("interrupted");
-        }
-        let var_args = [
-            "-o",
-            "ConnectTimeout=5",
-            "-o",
-            "BatchMode=yes",
-            "-i",
-            &key_path.to_string_lossy(),
-            "-P",
-            &port.to_string(),
-            &local_path.to_string_lossy(),
-            &format!("{user}@{host}:{remote_path}"),
-        ];
-
-        let mut args = SSH_ARGS.to_vec();
-        args.extend_from_slice(&var_args);
-
-        let output = Command::new("scp")
-            .args(args)
-            .output()
-            .context("failed to run scp")?;
-
-        if output.status.success() {
-            return Ok(());
-        }
-
-        if start.elapsed() > timeout {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!("SCP failed after {timeout:?}: {stderr}");
-        }
-
-        debug!("SCP not ready, retrying...");
-        std::thread::sleep(Duration::from_secs(2));
-    }
-}
+pub(crate) const OS_READY_PATTERN: &str = r"^CentOS Stream \d+";
+// pub(crate) const OS_READY_PATTERN: &str = r"^Fedora Linux \d+";
 
 #[test_fn(
-    cpu = [Cpu::Host],
+    cpu = {Cpu::Host, Cpu::HaswellV2},
     machine = {Machine::Pc, Machine::Q35},
     smp = {1, 2, 4},
     ovmf = [],
@@ -134,14 +27,14 @@ pub(crate) fn scp_to_guest(
 )]
 // OVMF requires UEFI support, which is not available on Machine::Pc
 #[test_fn(
-    cpu = [Cpu::Host],
+    cpu = {Cpu::Host, Cpu::HaswellV2},
     machine = Machine::Q35,
     smp = {1, 2, 4},
     ovmf = [OVMF_CODE],
     io_thread = {true, false},
 )]
 pub(crate) fn test_os_boot(
-    cpu: Option<Cpu>,
+    cpu: Cpu,
     machine: Machine,
     smp: u8,
     ovmf: Option<&str>,
@@ -150,18 +43,16 @@ pub(crate) fn test_os_boot(
     let tmp_dir = tempfile::tempdir().context("failed to create temp dir")?;
 
     let net_config = NetConfig::user_net();
-    let ci = CloudInitDisk::create(tmp_dir.path(), &net_config)
-        .context("failed to create cloud-init disk")?;
+    let mut ci = CloudInitDisk::new(tmp_dir.path())?.with_net_config(&net_config);
+    ci.create().context("failed to create cloud-init disk")?;
 
     let payload = QemuPayload::DiskImage(OS_IMAGE.into());
     let mut cfg = QemuConfig::new(&tmp_dir, &payload)
         .with_machine(machine)
         .with_smp(smp)
-        .with_cloud_init(ci.path.clone())
-        .with_net(net_config);
-    if let Some(model) = cpu {
-        cfg = cfg.with_cpu_model(model)
-    }
+        .with_cloud_init(ci.path())
+        .with_net(net_config)
+        .with_cpu_model(cpu);
     if let Some(path) = ovmf {
         cfg = cfg.with_ovmf(path.into());
     }
@@ -185,7 +76,7 @@ pub(crate) fn test_os_boot(
         .context("cloud-init did not finish")?;
 
     let hostname = ssh_command(
-        &ci.ssh_key_path,
+        ci.ssh_key_path(),
         "localhost",
         ssh_port,
         GUEST_USER,
@@ -198,43 +89,19 @@ pub(crate) fn test_os_boot(
     Ok(())
 }
 
-/// Send an SSH command without waiting for a response or retrying.
-/// Used for commands like `sudo reboot` where the connection will drop.
-fn ssh_fire_and_forget(key_path: &Path, host: &str, port: u16, user: &str, command: &str) {
-    let var_args = [
-        "-o",
-        "ConnectTimeout=5",
-        "-o",
-        "BatchMode=yes",
-        "-i",
-        &key_path.to_string_lossy(),
-        "-p",
-        &port.to_string(),
-        &format!("{user}@{host}"),
-        command,
-    ];
-
-    let mut args = SSH_ARGS.to_vec();
-    args.extend_from_slice(&var_args);
-
-    match Command::new("ssh").args(args).output() {
-        Ok(output) => debug!("fire-and-forget ssh exited with {}", output.status),
-        Err(e) => debug!("fire-and-forget ssh failed: {e}"),
-    }
-}
-
 #[test_fn(smp = {1, 2})]
 pub(crate) fn test_os_reboot(smp: u8) -> Result<()> {
     let tmp_dir = tempfile::tempdir().context("failed to create temp dir")?;
 
     let net_config = NetConfig::user_net();
-    let ci = CloudInitDisk::create(tmp_dir.path(), &net_config)
-        .context("failed to create cloud-init disk")?;
+    let mut ci = CloudInitDisk::new(tmp_dir.path())?.with_net_config(&net_config);
+    ci.create().context("failed to create cloud-init disk")?;
 
     let payload = QemuPayload::DiskImage(OS_IMAGE.into());
     let cfg = QemuConfig::new(&tmp_dir, &payload)
         .with_smp(smp)
-        .with_cloud_init(ci.path.clone())
+        .with_cpu_model(Cpu::HaswellV2)
+        .with_cloud_init(ci.path())
         .with_net(net_config)
         .with_allow_reboot();
     let mut process = QemuProcess::spawn(cfg).context("failed to spawn QEMU process")?;
@@ -250,7 +117,7 @@ pub(crate) fn test_os_reboot(smp: u8) -> Result<()> {
 
     // Verify SSH works before reboot
     ssh_command(
-        &ci.ssh_key_path,
+        ci.ssh_key_path(),
         "localhost",
         ssh_port,
         GUEST_USER,
@@ -262,7 +129,7 @@ pub(crate) fn test_os_reboot(smp: u8) -> Result<()> {
     // Issue reboot
     debug!("issuing reboot via SSH");
     ssh_fire_and_forget(
-        &ci.ssh_key_path,
+        ci.ssh_key_path(),
         "localhost",
         ssh_port,
         GUEST_USER,
@@ -278,7 +145,7 @@ pub(crate) fn test_os_reboot(smp: u8) -> Result<()> {
 
     // Verify the guest is functional after reboot
     let uptime = ssh_command(
-        &ci.ssh_key_path,
+        ci.ssh_key_path(),
         "localhost",
         ssh_port,
         GUEST_USER,

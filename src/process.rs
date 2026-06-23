@@ -70,6 +70,8 @@ struct Socket<State> {
 pub(crate) enum CpuModel {
     Host,
     Qemu64,
+    #[strum(serialize = "Haswell-v2")]
+    HaswellV2,
 }
 
 #[derive(Clone, Display)]
@@ -216,7 +218,10 @@ impl From<&GuestConfig> for Vec<String> {
         if let Some(ci) = &cfg.cloud_init {
             args.extend([
                 "-drive".into(),
-                format!("file={},format=raw,if=none,id=cidata", ci.display()),
+                format!(
+                    "file={},format=raw,if=none,id=cidata,readonly=on",
+                    ci.display()
+                ),
                 "-device".into(),
                 "virtio-blk-pci,drive=cidata".into(),
             ]);
@@ -290,7 +295,7 @@ impl<'a> QemuConfig<'a> {
         let ram_mb = match payload {
             QemuPayload::GuestBin(_) => 32,
             QemuPayload::Kernel { .. } => 256,
-            QemuPayload::DiskImage(_) => 1024,
+            QemuPayload::DiskImage(_) => 1536,
         };
         Self {
             temp_dir,
@@ -307,10 +312,6 @@ impl<'a> QemuConfig<'a> {
             rtc_clock: None,
             allow_reboot: false,
         }
-    }
-
-    pub fn ram_mb(&self) -> u16 {
-        self.ram_mb
     }
 
     pub fn with_incoming(mut self, temp_dir: &'a TempDir) -> Self {
@@ -334,8 +335,8 @@ impl<'a> QemuConfig<'a> {
         self
     }
 
-    pub fn with_cloud_init(mut self, path: PathBuf) -> Self {
-        self.cloud_init = Some(path);
+    pub fn with_cloud_init(mut self, path: impl Into<PathBuf>) -> Self {
+        self.cloud_init = Some(path.into());
         self
     }
 

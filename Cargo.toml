@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.102"
+base64 = "0.22.1"
 env_logger = "0.11.10"
 indoc = "2.0.7"
 libc = "0.2.185"
